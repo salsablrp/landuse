@@ -1,0 +1,60 @@
+#index-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100vh;
+    background-image: url("../images/background.jpg");
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: center;
+}
+ 
+#index-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100vh;
+    background-color: rgba(255, 255, 255, 0.7);
+}
+
+#index-info {
+    width: 80%;
+    text-align: center;
+}
+ 
+h1 {
+    background-color: rgb(28, 69, 147);
+    color: white;
+    padding: 3vw 4vw;
+    font-size: 5vw;
+    clear: both;
+}
+ 
+h2 {
+    margin-top: 2vw;
+    font-size: 3vw;
+    color: black;
+}
+ 
+strong { font-weight: 800; }
+ 
+a {
+    display: inline-block;
+    width: auto;
+    transition-property: background-color;
+    transition-duration: 1000ms;
+    background-color: rgb(28, 69, 147);
+    font-size: 2.5vw;
+    margin: 5vw 1vw 0 1vw;
+    padding: 1.5vw 3vw;
+    color: white;
+    text-decoration: none;
+}
+ 
+a:hover {
+    transition-property: background-color;
+    transition-duration: 1000ms;
+    background-color: rgb(28, 69, 147);
+}

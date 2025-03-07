@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"/>
+ 
+        <!-- Styles -->
+        <!-- Bootstrap -->
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+ 
+        <!-- Font Awesome -->
+        <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet"/>
+ 
+        <!-- OpenLayers library -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.1.0/ol.css">
+ 
+        <!-- Styles for the application -->
+        <link rel="stylesheet" href="./styles/viewer.css" type="text/css"/>
+ 
+        <!-- Application icon -->
+        <link rel="icon" href="./images/favicon.png" type="image/png">
+ 
+        <title>Land Use Analysis Tool</title>
+    </head>
+ 
+    <body onload="init()">
+        <nav class="navbar navbar-expand-lg bg-light navbar-light fixed-top">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="index.html"><strong>Land Use</strong> | Analysis Tool</a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#collapsibleNavbar">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="collapsibleNavbar">
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showPanel('pnl-basemap')">Base layer</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showPanel('pnl-search')">Districts</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showPanel('pnl-route')">Monitoring</a>
+                        </li>    
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showPanel('pnl-closest')">Predictive Model</a>
+                        </li>
+                        <!-- <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showPanel('pnl-service')">Service area</a>
+                        </li> -->
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="clearResults()">Clear results</a>
+                        </li>    
+                    </ul>
+                </div>
+            </div>
+        </nav>
+
+        <div id="pnl-closest" class="card panel panel-tool">
+            <div class="card-header">
+                Predictive Model
+                <span class="pull-right clickable close-icon" data-effect="fadeOut"><i class="fa fa-times"></i></span>
+            </div>
+            <div class="card-body">
+                <div id="pnl-closest-alert" class="alert alert-danger">
+                    Error:
+                </div>
+                <form>
+                    <div class="form-group">
+                    <label for="layer"><b>Select Layer</b></label>
+                    <select id="layer" class="form-select form-select-sm" aria-label=".form-select-sm example">
+                        <option selected>Select Layer</option>
+                    </select>
+                    <label for="attributes"><b>Select Attribute</b></label>
+                    <select id="attributes" class="form-select form-select-sm" aria-label=".form-select-sm example">
+                        <option selected>Select Attribute</option>
+                    </select>
+                    <label for="operator"><b>Select Operator</b></label>
+                    <select id="operator" class="form-select form-select-sm" aria-label=".form-select-sm example">
+                        <option selected>Select Operator</option>
+                    </select>
+                    <label for="value">Enter Value</label>
+                    <input type="text" class="form-control form-select-sm" id="value" name="value">
+                    <input id="btnClosest" type="button" class="btn pull-right" value="Predict Land Use">
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="pnl-route" class="card panel panel-tool">
+            <div class="card-header">
+                Land Use Monitoring
+                <span class="pull-right clickable close-icon" data-effect="fadeOut"><i class="fa fa-times"></i></span>
+            </div>
+            <div class="card-body">
+                <div id="pnl-route-alert" class="alert alert-danger">
+                    Error:
+                </div>
+                <form>
+                    <div class="form-group">
+                        <label for="start-year" class="form-label">Start Year: <span id="start-val">2000</span></label>
+                        <input id="start-year" type="range" class="form-range" min="2000" max="2024" step="1" value="2000" />
+                    </div>
+                    <div class="form-group">
+                        <label for="end-year" class="form-label">End Year: <span id="end-val">2024</span></label>
+                        <input id="end-year" type="range" class="form-range" min="2000" max="2024" step="1" value="2024" />
+                    </div>              
+                    <input id="btnRoute" type="button" class="btn pull-right" value="Calculate Land Use Change">
+                </form>
+            </div>
+        </div>
+
+        <div id="pnl-search" class="card panel panel-tool">
+            <div class="card-header">
+                Select District
+                <span class="pull-right clickable close-icon" data-effect="fadeOut"><i class="fa fa-times"></i></span>
+            </div>
+            <div class="card-body">
+                <div id="pnl-search-alert" class="alert alert-danger">
+                    Error:
+                </div>
+                <form>
+                    <div class="form-group">
+                        <label for="disrict"><b>Select Districts</b></label>
+                        <select id="district" class="form-select form-select-sm" aria-label=".form-select-sm example">
+                            <option selected>Select Districts</option>
+                        </select>
+                    </div>  
+                    <div class="form-group">
+                        <input id="btnSearch" type="button" class="btn pull-right" value="Go to District">
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="pnl-service" class="card panel panel-tool">
+            <div class="card-header">
+                Service area
+                <span class="pull-right clickable close-icon" data-effect="fadeOut"><i class="fa fa-times"></i></span>
+            </div>
+            <div class="card-body">
+                <div id="pnl-service-alert" class="alert alert-danger">
+                    Error:
+                </div>
+                <form>
+                    <div class="form-group">
+                        <label for="location-service">Location</label>
+                        <input id="location-service" type="textbox" class="form-control" placeholder="Click here and then on the map"/>
+                    </div>  
+                    <div class="form-group">
+                        Size of market:
+                        <div class="form-check">
+                            <input id="small_market" type="radio" name="size" class="form-check-input" value="small_areas" checked/><label for="small_market">Small market</label>
+                        </div>
+                        <div class="form-check">
+                            <input id="local_market" type="radio" name="size" class="form-check-input" value="local_areas"/><label for="local_market">Local market</label>
+                        </div>
+                        <div class="form-check">  
+                            <input id="medium_market" type="radio" name="size" class="form-check-input" value="medium_areas"/><label for="medium_market">Medium market</label>
+                        </div>
+                        <div class="form-check">
+                            <input id="capital_market" type="radio" name="size" class="form-check-input" value="capital_areas"/><label for="capital_market">Capital market</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <input id="btnService" type="button" class="btn pull-right" value="Find area">   
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="pnl-basemap" class="card panel panel-tool">
+            <div class="card-header">
+              Base layer
+              <span class="pull-right clickable close-icon" data-effect="fadeOut"><i class="fa fa-times"></i></span>
+            </div>
+            <div class="card-body">
+                <form>          
+                    <div class="form-group">            
+                        <div class="form-check">
+                            <input id="base-osm" type="radio" name="basemap" class="form-check-input" value="osm" checked/><label for="base-osm">OpenStreetMap</label>
+                        </div>
+                        <div class="form-check">
+                            <input id="base-otm" type="radio" name="basemap" class="form-check-input" value="otm"/><label for="base-otm">OpenTopoMap</label>
+                        </div>
+                        <div class="form-check">
+                            <input id="base-esri-wtm" type="radio" name="basemap" class="form-check-input" value="esri_wtm"/><label for="base-esri-wtm">ESRI World Topo Map</label>
+                        </div>
+                        <div class="form-check">
+                            <input id="base-esri-natgeo" type="radio" name="basemap" class="form-check-input" value="esri_natgeo"/><label for="base-esri-natgeo">ESRI NatGeo World Map</label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div id="pnl-about" class="card panel panel-info">
+            <div class="card-header">
+                <strong>About</strong>
+                <span class="pull-right clickable close-icon" data-effect="fadeOut"><i class="fa fa-times"></i></span>
+            </div>
+            <div class="card-body">
+                <p class="card-text">
+                    This web application was developed as an academic exercise for the students of the course "Geo web app building with open-source GIS tools".
+                    <br/><br/>
+                    Attributions:
+                    <ul>
+                        <li>Landing page background: Photo by <a href="https://unsplash.com/@organicdesignco?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" target="blank">Megan Thomas</a> on <a href="https://unsplash.com/photos/bundle-of-assorted-vegetable-lot-xMh_ww8HN_Q?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" target="blank">Unsplash</a>
+                        </li>
+                        <li>Location marker: Vectors and icons by <a href="https://www.svgrepo.com" target="blank">SVG Repo</a></li>
+                        <li>Market marker: <a href="https://www.flaticon.com/free-icons/market" target="blank" title="market icons">Market icons created by mynamepong - Flaticon</a></li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <div id="pnl-contact" class="card panel panel-info">
+            <div class="card-header">
+                <strong>Contact</strong>
+                <span class="pull-right clickable close-icon" data-effect="fadeOut"><i class="fa fa-times"></i></span>
+            </div>
+            <div class="card-body">
+                <p class="card-text">
+                    For information about the <strong>Faculty ITC</strong> visit <a href="https://www.itc.nl/">www.itc.nl</a>. <br/><br/>
+                    You can contact the instructors via e-mail:
+                    <ul>
+                        <li><strong>Gustavo García:</strong> <a href="mailto:g.a.garciachapeton-1@utwente.nl">g.a.garciachapeton-1@utwente.nl</a></li>
+                        <li><strong>Lucas de Oto:</strong> <a href="mailto:l.h.deoto@utwente.nl">l.h.deoto@utwente.nl</a></li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+
+        <div id="map">
+            <div id="scale_bar"></div>
+            <div id="scale_bar1"></div>
+            <div id="legend"></div>
+            <button onclick="show_hide_legend()" type="button" id="legend_btn" class="btn btn-success btn-sm">☰ Show Legend</button>    
+            <select id="measuretype" class="form-select form-select-sm" aria-label=".form-select-sm example">
+                <option value="select">Select Measure option</option>
+                <option value="length">Length (LineString)</option>
+                <option value="area">Area (Polygon)</option>
+                <option value="clear">Clear Measurement</option>
+            </select>
+        </div>
+
+        <footer class="fixed-bottom bg-light">
+            <div class="container-fluid d-flex justify-content-center">
+                <a href="#" onclick="showPanel('pnl-about')">About</a>
+                <a href="#" onclick="showPanel('pnl-contact')">Contact</a>
+            </div>
+        </footer>
+        <!-- Scripts -->
+        <!-- JQuery library -->
+        <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+        
+        <!-- Bootstrap -->
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+        
+        <!-- Openlayers -->
+        <script src="https://cdn.jsdelivr.net/npm/ol@v8.1.0/dist/ol.js"></script>
+        
+        <!-- Own script -->
+        <script src="./scripts/viewer.js"></script>
+    </body>
+</html>
