@@ -519,7 +519,7 @@ function clearMeasurement() {
 const adminLevels = {
     0: 'data/admin_level0.geojson',
     1: 'data/admin_level1.geojson',
-    2: 'data/admin_level2.geojson'
+    2: 'data/admin_level2_bangkok.geojson'
   };
   
 let adminLayer = null;
