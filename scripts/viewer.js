@@ -42,11 +42,8 @@ function drawCircle(){
 function init() {
     // Define the map view
     let mainView = new ol.View({
-        extent: [3124925, -599644, 3537136, -158022],
-        center: [3336467, -385622],
-        minZoom: 6,
-        maxZoom: 14,
-        zoom: 9
+        center: [0, 0],  // temporary center
+        zoom: 2          // global zoom level
     });
 
     // Initialize the map
@@ -56,6 +53,18 @@ function init() {
         view: mainView,
         controls: []
     });
+
+    const popupElement = document.createElement('div');
+    popupElement.id = 'popup';
+    document.body.appendChild(popupElement);
+
+    const popupOverlay = new ol.Overlay({
+        element: popupElement,
+        positioning: 'bottom-center',
+        stopEvent: false
+    });
+
+    mainMap.addOverlay(popupOverlay);
 
     let baseLayer = getBaseMap("osm");
 
@@ -248,129 +257,108 @@ const sizes = {
 };
  
 $("#btnSearch").click(function(){
-    removeLayerByName(mainMap, "markets");
+    removeLayerByName(mainMap, "districts");
     $("#pnl-search-alert").hide();
- 
-    $.ajax({
-        url:"./services/search.py?location=" +
-            $("#location-search").val() +
-            "&distance=" +
-            $("#val").text() +
-            "&srid=3857",
-        type: "GET",
-        success: function(data){
-            if (data.length != 0){
-                let features = [];
-                for (var i = 0; i < data.length; i++){    
-                    var feature = new ol.format.GeoJSON().readFeature(data[i].geom);
-                    feature.setStyle(
-                        new ol.style.Style({ 
-                            image: new ol.style.Icon({
-                                src: './images/market.png',            
-                                width: sizes[data[i].categorie]
-                            })
-                        })
-                    );
-                    features.push(feature);
-                }
- 
-                const vectorSource = new ol.source.Vector({
-                    features: features,
-                })
- 
-                const vectorLayer = new ol.layer.Vector({
-                    name: "markets",
-                    source: vectorSource,
-                })
-                
-                mainMap.addLayer(vectorLayer)
-            } 
-        },
-        error: function(data){
-            $("#pnl-search-alert").html("Error: An error occurred while executing the tool.");
-            $("#pnl-search-alert").show();
+
+    const level = document.getElementById("district").value;
+    if (!level) return;
+
+    const url = `data/admin_level${level}.geojson`;
+
+    const source = new ol.source.Vector({
+        url: url,
+        format: new ol.format.GeoJSON()
+    });
+
+    const layer = new ol.layer.Vector({
+        name: "districts",
+        source: source,
+        style: new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: '#333', width: 1.5 }),
+            fill: new ol.style.Fill({ color: 'rgba(100, 100, 255, 0.2)' })
+        })
+    });
+
+    mainMap.addLayer(layer);
+
+    source.once('change', () => {
+        if (source.getState() === 'ready') {
+            mainMap.getView().fit(source.getExtent(), { padding: [20, 20, 20, 20] });
         }
-    })
+    });
 });
 
-$("#btnRoute").click(function () { 
-    removeLayerByName(mainMap, "route");
+$("#btnRoute").click(function () {
+    removeLayerByName(mainMap, "lu_change_2020");
+    removeLayerByName(mainMap, "lu_change_2024");
     $("#pnl-route-alert").hide();
-    
-    $.ajax({
-        url: "./services/routing.py?source=" + 
-            $("#start").val() + 
-            "&target=" + 
-            $("#end").val() + 
-            "&srid=3857", 
-        type: "GET",
-        success: function(data){
-            if (data.path != null){
-                let vectorLayer = new ol.layer.Vector({
-                    name: "route",
-                    source: new ol.source.Vector({
-                        features: new ol.format.GeoJSON().readFeatures(data.path),
-                    }),
-                    style: new ol.style.Style({
-                        stroke: new ol.style.Stroke({
-                            color: '#ff0000',
-                            width: 4,
-                        }),
-                    })
-                });
-                mainMap.addLayer(vectorLayer);
-                
-            } 
-        },
-        error: function(data){
-            $("#pnl-route-alert").html("Error: An error occurred while executing the tool.");
-            $("#pnl-route-alert").show();
+
+    const startYear = document.getElementById('start-year').value;
+    const endYear = document.getElementById('end-year').value;
+
+    const url1 = `data/lu_${startYear}.geojson`;
+    const url2 = `data/lu_${endYear}.geojson`;
+
+    const src1 = new ol.source.Vector({ url: url1, format: new ol.format.GeoJSON() });
+    const src2 = new ol.source.Vector({ url: url2, format: new ol.format.GeoJSON() });
+
+    const layer1 = new ol.layer.Vector({
+        name: "lu_change_2020",
+        source: src1,
+        style: new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(0, 0, 255, 0.3)' }) })
+    });
+    const layer2 = new ol.layer.Vector({
+        name: "lu_change_2024",
+        source: src2,
+        style: new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(255, 0, 0, 0.3)' }) })
+    });
+
+    mainMap.addLayer(layer1);
+    mainMap.addLayer(layer2);
+
+    src2.once('change', () => {
+        if (src2.getState() === 'ready') {
+            mainMap.getView().fit(src2.getExtent(), { padding: [20, 20, 20, 20] });
         }
-    })
+    });
 });
 
-$("#btnClosest").click(function () { 
-	removeLayerByName(mainMap, "markets");
-	$("#pnl-closest-alert").hide();
-	
-	$.ajax({
-		url: "./services/closest_markets.py?location=" + 
-			$("#location-closest").val() + 
-			"&srid=3857",
-		type: "GET",
-		success: function(data){
-			if (data.length != 0){
-				let features = [];
-				for (var i = 0; i < data.length; i++){
-					var feature = new ol.format.GeoJSON().readFeature(data[i].geometry);
-					feature.setStyle(
-						new ol.style.Style({ 
-							image: new ol.style.Icon({
-								src: './images/market.png',			
-								width: sizes[data[i].categorie]
-							})
-						})
-					);
-					features.push(feature);
-				}
+$("#btnClosest").click(function () {
+    removeLayerByName(mainMap, "predicted");
+    $("#pnl-closest-alert").hide();
 
-				const vectorSource = new ol.source.Vector({
-					features: features,
-				})
+    const layerName = document.getElementById("layer").value;
+    const attribute = document.getElementById("attributes").value;
+    const operator = document.getElementById("operator").value;
+    const value = document.getElementById("value").value;
 
-				const vectorLayer = new ol.layer.Vector({
-					name: "markets",
-					source: vectorSource,
-				})
-				
-				mainMap.addLayer(vectorLayer)
-			} 
-		},
-		error: function(data){
-			$("#pnl-closest-alert").html("Error: An error occurred while executing the tool.");
-			$("#pnl-closest-alert").show();
-		}
-	})
+    const layerObj = analysisLayers[layerName];
+    if (!layerObj) return;
+
+    const features = layerObj.getSource().getFeatures().filter(f => {
+        const val = f.get(attribute);
+        if (operator === '=') return val == value;
+        if (operator === '>') return val > value;
+        if (operator === '<') return val < value;
+        return false;
+    });
+
+    const filteredLayer = new ol.layer.Vector({
+        name: "predicted",
+        source: new ol.source.Vector({ features: features }),
+        style: new ol.style.Style({
+            fill: new ol.style.Fill({ color: 'rgba(255, 255, 0, 0.6)' }),
+            stroke: new ol.style.Stroke({ color: '#ff0', width: 2 })
+        })
+    });
+
+    mainMap.addLayer(filteredLayer);
+
+    filteredLayer.getSource().once('change', () => {
+        if (filteredLayer.getSource().getState() === 'ready') {
+            mainMap.getView().fit(filteredLayer.getSource().getExtent(), { padding: [20, 20, 20, 20] });
+        }
+    });
 });
 
 ////////////////////////////// YEAR SLIDER //////////////////////////////
@@ -524,3 +512,134 @@ function clearMeasurement() {
     // Reset the measuretype dropdown to default
     document.getElementById('measuretype').value = 'select';
 }
+
+////////////////// ADMIN LEVEL //////////////////
+
+// Load Files
+const adminLevels = {
+    0: 'data/admin_level0.geojson',
+    1: 'data/admin_level1.geojson',
+    2: 'data/admin_level2.geojson'
+  };
+  
+let adminLayer = null;
+
+function loadAdmin(level) {
+if (adminLayer) map.removeLayer(adminLayer);
+const src = new ol.source.Vector({
+    url: adminLevels[level],
+    format: new ol.format.GeoJSON()
+});
+adminLayer = new ol.layer.Vector({
+    source: src,
+    style: new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: '#555', width: 2 }),
+    fill: new ol.style.Fill({ color: 'rgba(200,200,200,0.4)' })
+    })
+});
+mainMap.addLayer(adminLayer);
+
+src.on('addfeature', () => {
+    mainMap.getView().fit(src.getExtent(), { padding: [20,20,20,20] });
+});
+
+mainMap.on('singleclick', function(evt) {
+    mainMap.forEachFeatureAtPixel(evt.pixel, function(feat) {
+    const props = feat.getProperties();
+    delete props.geometry;
+    const rows = Object.entries(props).map(e=>`<tr><th>${e[0]}</th><td>${e[1]}</td></tr>`).join('');
+    popupOverlay.getElement().innerHTML = `<table class="table table-sm">${rows}</table>`;
+    popupOverlay.setPosition(evt.coordinate);
+    });
+});
+}
+
+// Populate the dropdown and bind in init()
+const sel = document.getElementById('district');
+Object.keys(adminLevels).forEach(l => {
+  const o = new Option('Level '+l, l);
+  sel.add(o);
+});
+document.getElementById('btnSearch').onclick = () => {
+    const level = sel.value;
+    if (level !== '') {
+        loadAdmin(level);
+    }
+};
+
+////////////////// MONITORING //////////////////
+
+// Load files
+const luMaps = {
+    '2020': 'data/lu_2020.geojson',
+    '2024': 'data/lu_2024.geojson'
+  };
+  let map2020, map2024, diffLayer;
+
+// Populate year range slidable values
+const start = document.getElementById('start-year');
+const end = document.getElementById('end-year');
+start.oninput = () => document.getElementById('start-val').textContent = start.value;
+end.oninput = () => document.getElementById('end-val').textContent = end.value;
+
+// Calculate and render change
+document.getElementById('btnRoute').onclick = () => {
+    const start = document.getElementById('start-year').value;
+    const end = document.getElementById('end-year').value;
+  
+    const src1 = new ol.source.Vector({ url: luMaps[start], format: new ol.format.GeoJSON() });
+    const src2 = new ol.source.Vector({ url: luMaps[end], format: new ol.format.GeoJSON() });
+  
+    map2020 = new ol.layer.Vector({
+      source: src1,
+      style: new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(0,0,255,0.3)' }) })
+    });
+    map2024 = new ol.layer.Vector({
+      source: src2,
+      style: new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(255,0,0,0.3)' }) })
+    });
+  
+    mainMap.addLayer(map2020);
+    mainMap.addLayer(map2024);
+  
+    src2.once('change', () => {
+      if (src2.getState() === 'ready') {
+        mainMap.getView().fit(src2.getExtent(), { padding: [20, 20, 20, 20] });
+      }
+    });
+  };  
+
+////////////////// PREDICTIVE MODEL //////////////////
+
+// Define Sample layers
+const ops = ['=', '>', '<'];
+
+// Populate dropdowns dynamically
+const lay = document.getElementById('layer');
+const attr = document.getElementById('attributes');
+const op = document.getElementById('operator');
+
+Object.keys(analysisLayers).forEach(n => lay.add(new Option(n, n)));
+lay.onchange = () => {
+  const lyr = analysisLayers[lay.value];
+  const f = lyr.getSource().getFeatures()[0];
+  Object.keys(f.getProperties()).filter(p=>p!=='geometry').forEach(k => attr.add(new Option(k,k)));
+};
+ops.forEach(o => operator.add(new Option(o, o)));
+
+// Apply filter and highlights
+document.getElementById('btnClosest').onclick = () => {
+    const analysisLayers = {
+        'Land Use 2024': map2024,
+        'Districts': adminLayer
+      };
+    const lyr = analysisLayers[lay.value];
+    const a = attr.value, o = operator.value, v = document.getElementById('value').value;
+    const feat = lyr.getSource().getFeatures().filter(f => {
+      const val = f.get(a);
+      return o==='=' ? val==v : o==='>' ? val>v : val<v;
+    });
+    // Highlight them:
+    const selStyle = new ol.style.Style({ fill: new ol.style.Fill({ color:'rgba(255,255,0,0.6)' }), stroke: new ol.style.Stroke({ color:'#ff0', width:2 }) });
+    feat.forEach(f=>f.setStyle(selStyle));
+  };

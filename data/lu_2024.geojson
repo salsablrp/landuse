@@ -1,0 +1,41 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 1,
+        "type": "Urban",
+        "area_ha": 10
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100.5, 13.75], [100.52, 13.75], [100.52, 13.77], [100.5, 13.77], [100.5, 13.75]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 2,
+        "type": "Urban",  // Changed from Agriculture to Urban
+        "area_ha": 12
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100.52, 13.75], [100.54, 13.75], [100.54, 13.77], [100.52, 13.77], [100.52, 13.75]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 3,
+        "type": "Water",  // Changed from Forest to Water
+        "area_ha": 8
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100.5, 13.77], [100.52, 13.77], [100.52, 13.79], [100.5, 13.79], [100.5, 13.77]]]
+      }
+    }
+  ]
+}
