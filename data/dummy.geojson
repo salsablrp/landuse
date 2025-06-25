@@ -1,0 +1,44 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 1,
+        "landuse": "Residential",
+        "area_ha": 4.5,
+        "density": 1200
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100.68,14.09],[100.70,14.09],[100.70,14.10],[100.68,14.10],[100.68,14.09]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 2,
+        "landuse": "Commercial",
+        "area_ha": 2.0,
+        "density": 5000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100.70,14.09],[100.72,14.09],[100.72,14.10],[100.70,14.10],[100.70,14.09]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 3,
+        "landuse": "Agricultural",
+        "area_ha": 6.0,
+        "density": 200
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100.68,14.07],[100.70,14.07],[100.70,14.09],[100.68,14.09],[100.68,14.07]]]
+      }
+    }
+  ]
+}
