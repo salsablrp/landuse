@@ -294,8 +294,8 @@ $("#btnRoute").click(function () {
 
     const imgSource = new ol.source.ImageStatic({
         url: 'data/lu_change.png',
-        imageExtent: [70.473983140, 50.752613543, 72.416537529, 51.557989353],
-        projection: 'EPSG:4326'
+        imageExtent: [7845095.0707, 6720529.6193, 8061137.2191, 6578107.7816],
+        projection: 'EPSG:3857'
     });
 
     const changeLayer = new ol.layer.Image({
@@ -318,8 +318,8 @@ $("#btnClosest").click(function () {
 
     const predSource = new ol.source.ImageStatic({
         url: 'data/lu_predict.png',
-        imageExtent: [70.473983140, 50.752613543, 72.416537529, 51.557989353],
-        projection: 'EPSG:4326'
+        imageExtent: [7845095.0707, 6720529.6193, 8061137.2191, 6578107.7816],
+        projection: 'EPSG:3857'
     });
 
     const predictedLayer = new ol.layer.Image({
