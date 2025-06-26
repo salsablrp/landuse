@@ -289,36 +289,26 @@ $("#btnSearch").click(function(){
 });
 
 $("#btnRoute").click(function () {
-    removeLayerByName(mainMap, "lu_change_2020");
-    removeLayerByName(mainMap, "lu_change_2024");
+    // Remove any previous change layers
+    removeLayerByName(mainMap, "lu_change_tif");
     $("#pnl-route-alert").hide();
 
-    const startYear = document.getElementById('start-year').value;
-    const endYear = document.getElementById('end-year').value;
-
-    const url1 = `data/lu_${startYear}.geojson`;
-    const url2 = `data/lu_${endYear}.geojson`;
-
-    const src1 = new ol.source.Vector({ url: url1, format: new ol.format.GeoJSON() });
-    const src2 = new ol.source.Vector({ url: url2, format: new ol.format.GeoJSON() });
-
-    const layer1 = new ol.layer.Vector({
-        name: "lu_change_2020",
-        source: src1,
-        style: new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(0, 0, 255, 0.3)' }) })
-    });
-    const layer2 = new ol.layer.Vector({
-        name: "lu_change_2024",
-        source: src2,
-        style: new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(255, 0, 0, 0.3)' }) })
+    // Load the raster layer
+    const rasterLayer = new ol.layer.Tile({
+        name: "lu_change_tif",
+        source: new ol.source.TileImage({
+            url: 'data/lu_change.tif',
+            tileLoadFunction: function (imageTile, src) {
+                imageTile.getImage().src = src;
+            }
+        })
     });
 
-    mainMap.addLayer(layer1);
-    mainMap.addLayer(layer2);
+    mainMap.addLayer(rasterLayer);
 
-    src2.once('change', () => {
-        if (src2.getState() === 'ready') {
-            mainMap.getView().fit(src2.getExtent(), { padding: [20, 20, 20, 20] });
+    source.once('change', () => {
+        if (source.getState() === 'ready') {
+            mainMap.getView().fit(source.getExtent(), { padding: [20, 20, 20, 20] });
         }
     });
 });
@@ -519,7 +509,7 @@ function clearMeasurement() {
 const adminLevels = {
     0: 'data/admin_level0.geojson',
     1: 'data/admin_level1.geojson',
-    2: 'data/admin_level2_bangkok.geojson'
+    2: 'data/admin_level2.geojson'
   };
   
 let adminLayer = null;
@@ -569,38 +559,20 @@ document.getElementById('btnSearch').onclick = () => {
 
 ////////////////// MONITORING //////////////////
 
-// Load files
-const luMaps = {
-    '2020': 'data/lu_2020.geojson',
-    '2024': 'data/lu_2024.geojson'
-  };
-  let map2020, map2024, diffLayer;
+// Load file
+document.getElementById("btnRoute").addEventListener("click", function () {
+    removeLayerByName(mainMap, "lu_change_tif");
+    document.getElementById("pnl-route-alert").style.display = "none";
 
-// Populate year range slidable values
-const start = document.getElementById('start-year');
-const end = document.getElementById('end-year');
-start.oninput = () => document.getElementById('start-val').textContent = start.value;
-end.oninput = () => document.getElementById('end-val').textContent = end.value;
+    const changeLayer = new TileLayer({
+      name: "lu_change_tif",
+      source: new GeoTIFF({
+        sources: [{ url: 'data/lu_change.tif' }],
+        normalize: false
+      })
+    });
 
-// Calculate and render change
-document.getElementById('btnRoute').onclick = () => {
-    const start = document.getElementById('start-year').value;
-    const end = document.getElementById('end-year').value;
-  
-    const src1 = new ol.source.Vector({ url: luMaps[start], format: new ol.format.GeoJSON() });
-    const src2 = new ol.source.Vector({ url: luMaps[end], format: new ol.format.GeoJSON() });
-  
-    map2020 = new ol.layer.Vector({
-      source: src1,
-      style: new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(0,0,255,0.3)' }) })
-    });
-    map2024 = new ol.layer.Vector({
-      source: src2,
-      style: new ol.style.Style({ fill: new ol.style.Fill({ color: 'rgba(255,0,0,0.3)' }) })
-    });
-  
-    mainMap.addLayer(map2020);
-    mainMap.addLayer(map2024);
+    mainMap.addLayer(changeLayer);
   
     src2.once('change', () => {
       if (src2.getState() === 'ready') {
