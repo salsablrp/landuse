@@ -320,7 +320,7 @@ $("#btnClosest").click(function () {
     const predictedLayer = new ol.layer.WebGLTile({
         name: "predicted",
         source: new ol.source.GeoTIFF({
-            sources: [{ url: 'data/lu_predict.tif' }],
+            sources: [{ url: 'data/lu_predict.png' }],
             normalize: false
         })
     });
@@ -550,7 +550,7 @@ document.getElementById("btnRoute").addEventListener("click", function () {
     const changeLayer = new TileLayer({
       name: "lu_change_tif",
       source: new GeoTIFF({
-        sources: [{ url: 'data/lu_change.tif' }],
+        sources: [{ url: 'data/lu_change.png' }],
         normalize: false
       })
     });
