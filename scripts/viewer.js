@@ -317,36 +317,19 @@ $("#btnClosest").click(function () {
     removeLayerByName(mainMap, "predicted");
     $("#pnl-closest-alert").hide();
 
-    const layerName = document.getElementById("layer").value;
-    const attribute = document.getElementById("attributes").value;
-    const operator = document.getElementById("operator").value;
-    const value = document.getElementById("value").value;
-
-    const layerObj = analysisLayers[layerName];
-    if (!layerObj) return;
-
-    const features = layerObj.getSource().getFeatures().filter(f => {
-        const val = f.get(attribute);
-        if (operator === '=') return val == value;
-        if (operator === '>') return val > value;
-        if (operator === '<') return val < value;
-        return false;
-    });
-
-    const filteredLayer = new ol.layer.Vector({
+    const predictedLayer = new ol.layer.WebGLTile({
         name: "predicted",
-        source: new ol.source.Vector({ features: features }),
-        style: new ol.style.Style({
-            fill: new ol.style.Fill({ color: 'rgba(255, 255, 0, 0.6)' }),
-            stroke: new ol.style.Stroke({ color: '#ff0', width: 2 })
+        source: new ol.source.GeoTIFF({
+            sources: [{ url: 'data/lu_predict.tif' }],
+            normalize: false
         })
     });
 
-    mainMap.addLayer(filteredLayer);
+    mainMap.addLayer(predictedLayer);
 
-    filteredLayer.getSource().once('change', () => {
-        if (filteredLayer.getSource().getState() === 'ready') {
-            mainMap.getView().fit(filteredLayer.getSource().getExtent(), { padding: [20, 20, 20, 20] });
+    source.once('change', () => {
+        if (source.getState() === 'ready') {
+            mainMap.getView().fit(source.getExtent(), { padding: [20, 20, 20, 20] });
         }
     });
 });
@@ -579,39 +562,39 @@ document.getElementById("btnRoute").addEventListener("click", function () {
         mainMap.getView().fit(src2.getExtent(), { padding: [20, 20, 20, 20] });
       }
     });
-  };  
+  });  
 
 ////////////////// PREDICTIVE MODEL //////////////////
 
-// Define Sample layers
+// Populate dropdowns
+const analysisLayers = ['Land Use 2025', 'Land Use 2030', 'Land Use 2035', 'Land Use 2040'];
+const attri = ['Nature-based Solutions', 'Industry Development', 'Land Use Planning', 'Scenario Planning'];
 const ops = ['=', '>', '<'];
 
-// Populate dropdowns dynamically
-const lay = document.getElementById('layer');
-const attr = document.getElementById('attributes');
-const op = document.getElementById('operator');
+const layerSelect = document.getElementById("layer");
+const attrSelect = document.getElementById("attributes");
+const opSelect = document.getElementById("operator");
 
-Object.keys(analysisLayers).forEach(n => lay.add(new Option(n, n)));
-lay.onchange = () => {
-  const lyr = analysisLayers[lay.value];
-  const f = lyr.getSource().getFeatures()[0];
-  Object.keys(f.getProperties()).filter(p=>p!=='geometry').forEach(k => attr.add(new Option(k,k)));
-};
-ops.forEach(o => operator.add(new Option(o, o)));
+// Populate layer dropdown
+analysisLayers.forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    layerSelect.appendChild(opt);
+});
 
-// Apply filter and highlights
-document.getElementById('btnClosest').onclick = () => {
-    const analysisLayers = {
-        'Land Use 2024': map2024,
-        'Districts': adminLayer
-      };
-    const lyr = analysisLayers[lay.value];
-    const a = attr.value, o = operator.value, v = document.getElementById('value').value;
-    const feat = lyr.getSource().getFeatures().filter(f => {
-      const val = f.get(a);
-      return o==='=' ? val==v : o==='>' ? val>v : val<v;
-    });
-    // Highlight them:
-    const selStyle = new ol.style.Style({ fill: new ol.style.Fill({ color:'rgba(255,255,0,0.6)' }), stroke: new ol.style.Stroke({ color:'#ff0', width:2 }) });
-    feat.forEach(f=>f.setStyle(selStyle));
-  };
+// Populate attribute dropdown
+attri.forEach(attr => {
+    const opt = document.createElement("option");
+    opt.value = attr;
+    opt.textContent = attr;
+    attrSelect.appendChild(opt);
+});
+
+// Populate operator dropdown
+ops.forEach(op => {
+    const opt = document.createElement("option");
+    opt.value = op;
+    opt.textContent = op;
+    opSelect.appendChild(opt);
+});
