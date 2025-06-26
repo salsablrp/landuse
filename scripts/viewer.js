@@ -42,6 +42,7 @@ function drawCircle(){
 function init() {
     // Define the map view
     let mainView = new ol.View({
+        projection: 'EPSG:3857',
         center: [0, 0],  // temporary center
         zoom: 2          // global zoom level
     });
@@ -294,7 +295,7 @@ $("#btnRoute").click(function () {
 
     const imgSource = new ol.source.ImageStatic({
         url: 'data/lu_change.png',
-        imageExtent: [7845095.0707, 6720529.6193, 8061137.2191, 6578107.7816],
+        imageExtent: [7845095.0707, 6578107.7816, 8061137.2191, 6720529.6193],
         projection: 'EPSG:3857'
     });
 
@@ -318,7 +319,7 @@ $("#btnClosest").click(function () {
 
     const predSource = new ol.source.ImageStatic({
         url: 'data/lu_predict.png',
-        imageExtent: [7845095.0707, 6720529.6193, 8061137.2191, 6578107.7816],
+        imageExtent: [7845095.0707, 6578107.7816, 8061137.2191, 6720529.6193],
         projection: 'EPSG:3857'
     });
 
