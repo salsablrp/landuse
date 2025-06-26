@@ -296,11 +296,10 @@ $("#btnRoute").click(function () {
     // Load the raster layer
     const rasterLayer = new ol.layer.Tile({
         name: "lu_change_tif",
-        source: new ol.source.TileImage({
-            url: 'data/lu_change.tif',
-            tileLoadFunction: function (imageTile, src) {
-                imageTile.getImage().src = src;
-            }
+        source: new ol.source.ImageStatic({
+            url: 'data/lu_change.png',
+            imageExtent: [70.473983140, 51.557989353, 72.416537529, 50.752613543], 
+            projection: 'EPSG:4326' 
         })
     });
 
@@ -317,11 +316,12 @@ $("#btnClosest").click(function () {
     removeLayerByName(mainMap, "predicted");
     $("#pnl-closest-alert").hide();
 
-    const predictedLayer = new ol.layer.WebGLTile({
+    const predictedLayer = new ol.layer.Image({
         name: "predicted",
-        source: new ol.source.GeoTIFF({
-            sources: [{ url: 'data/lu_predict.png' }],
-            normalize: false
+        source: new ol.source.ImageStatic({
+            url: 'data/lu_predict.png',
+            imageExtent: [70.473983140, 51.557989353, 72.416537529, 50.752613543], 
+            projection: 'EPSG:4326' 
         })
     });
 
@@ -547,12 +547,13 @@ document.getElementById("btnRoute").addEventListener("click", function () {
     removeLayerByName(mainMap, "lu_change_tif");
     document.getElementById("pnl-route-alert").style.display = "none";
 
-    const changeLayer = new TileLayer({
+    const changeLayer = new ol.layer.Image({
       name: "lu_change_tif",
-      source: new GeoTIFF({
-        sources: [{ url: 'data/lu_change.png' }],
-        normalize: false
-      })
+      source: new ol.source.ImageStatic({
+            url: 'data/lu_change.png',
+            imageExtent: [70.473983140, 51.557989353, 72.416537529, 50.752613543], 
+            projection: 'EPSG:4326' 
+        })
     });
 
     mainMap.addLayer(changeLayer);
