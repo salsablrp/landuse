@@ -42,7 +42,6 @@ function drawCircle(){
 function init() {
     // Define the map view
     let mainView = new ol.View({
-        projection: 'EPSG:4326',
         center: [0, 0],  // temporary center
         zoom: 2          // global zoom level
     });
