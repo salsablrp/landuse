@@ -42,6 +42,7 @@ function drawCircle(){
 function init() {
     // Define the map view
     let mainView = new ol.View({
+        projection: 'EPSG:4326',
         center: [0, 0],  // temporary center
         zoom: 2          // global zoom level
     });
@@ -289,26 +290,26 @@ $("#btnSearch").click(function(){
 });
 
 $("#btnRoute").click(function () {
-    // Remove any previous change layers
     removeLayerByName(mainMap, "lu_change_tif");
     $("#pnl-route-alert").hide();
 
-    // Load the raster layer
-    const rasterLayer = new ol.layer.Tile({
-        name: "lu_change_tif",
-        source: new ol.source.ImageStatic({
-            url: 'data/lu_change.png',
-            imageExtent: [70.473983140, 51.557989353, 72.416537529, 50.752613543], 
-            projection: 'EPSG:4326' 
-        })
+    const imgSource = new ol.source.ImageStatic({
+        url: 'data/lu_change.png',
+        imageExtent: [70.473983140, 50.752613543, 72.416537529, 51.557989353],
+        projection: 'EPSG:4326'
     });
 
-    mainMap.addLayer(rasterLayer);
+    const changeLayer = new ol.layer.Image({
+        name: "lu_change_tif",
+        source: imgSource
+    });
 
-    source.once('change', () => {
-        if (source.getState() === 'ready') {
-            mainMap.getView().fit(source.getExtent(), { padding: [20, 20, 20, 20] });
-        }
+    mainMap.addLayer(changeLayer);
+
+    // Fit map to image extent
+    mainMap.getView().fit(imgSource.getImageExtent(), {
+        padding: [20, 20, 20, 20],
+        maxZoom: 14
     });
 });
 
@@ -316,21 +317,22 @@ $("#btnClosest").click(function () {
     removeLayerByName(mainMap, "predicted");
     $("#pnl-closest-alert").hide();
 
+    const predSource = new ol.source.ImageStatic({
+        url: 'data/lu_predict.png',
+        imageExtent: [70.473983140, 50.752613543, 72.416537529, 51.557989353],
+        projection: 'EPSG:4326'
+    });
+
     const predictedLayer = new ol.layer.Image({
         name: "predicted",
-        source: new ol.source.ImageStatic({
-            url: 'data/lu_predict.png',
-            imageExtent: [70.473983140, 51.557989353, 72.416537529, 50.752613543], 
-            projection: 'EPSG:4326' 
-        })
+        source: predSource
     });
 
     mainMap.addLayer(predictedLayer);
 
-    source.once('change', () => {
-        if (source.getState() === 'ready') {
-            mainMap.getView().fit(source.getExtent(), { padding: [20, 20, 20, 20] });
-        }
+    mainMap.getView().fit(predSource.getImageExtent(), {
+        padding: [20, 20, 20, 20],
+        maxZoom: 14
     });
 });
 
@@ -541,29 +543,6 @@ document.getElementById('btnSearch').onclick = () => {
 };
 
 ////////////////// MONITORING //////////////////
-
-// Load file
-document.getElementById("btnRoute").addEventListener("click", function () {
-    removeLayerByName(mainMap, "lu_change_tif");
-    document.getElementById("pnl-route-alert").style.display = "none";
-
-    const changeLayer = new ol.layer.Image({
-      name: "lu_change_tif",
-      source: new ol.source.ImageStatic({
-            url: 'data/lu_change.png',
-            imageExtent: [70.473983140, 51.557989353, 72.416537529, 50.752613543], 
-            projection: 'EPSG:4326' 
-        })
-    });
-
-    mainMap.addLayer(changeLayer);
-  
-    src2.once('change', () => {
-      if (src2.getState() === 'ready') {
-        mainMap.getView().fit(src2.getExtent(), { padding: [20, 20, 20, 20] });
-      }
-    });
-  });  
 
 ////////////////// PREDICTIVE MODEL //////////////////
 
