@@ -1,9 +1,5 @@
 streamlit
 leafmap
-tempfile
-os
-pathlib
-operator
 geopandas
 joblib
 rasterio
