@@ -59,6 +59,37 @@ def load_predictors(predictor_paths, ref_profile=None, align=True):
 
     return stack
 
+def prepare_training_data(predictors, target, mask=None):
+    """
+    Convert stacked predictor rasters + target raster into (X, y) arrays.
+
+    Args:
+        predictors (np.ndarray): Shape [n_predictors, H, W]
+        target (np.ndarray): Target land cover raster [H, W]
+        mask (np.ndarray or None): Optional mask of valid pixels [H, W]
+
+    Returns:
+        X (np.ndarray): [n_samples, n_features]
+        y (np.ndarray): [n_samples]
+    """
+    n_predictors, H, W = predictors.shape
+
+    # Reshape predictors: [H*W, n_predictors]
+    X = predictors.reshape(n_predictors, -1).T
+    y = target.ravel()
+
+    # Mask invalids (nodata or custom)
+    if mask is not None:
+        valid = mask.ravel()
+        X = X[valid]
+        y = y[valid]
+    else:
+        # Drop nodata in target (usually 0 or -9999)
+        valid = (y != 0) & (y != -9999)
+        X = X[valid]
+        y = y[valid]
+
+    return X, y
 
 # import rasterio
 # import numpy as np
