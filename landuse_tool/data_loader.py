@@ -1,31 +1,53 @@
 import rasterio
 import numpy as np
+import tempfile
 from pathlib import Path
 from .utils import reproject_raster, align_rasters, create_mask
 
-def load_raster(path):
+def _open_as_raster(path_or_file):
     """
-    Load a single raster and return (array, profile).
+    Helper to open a raster from a file path or an uploaded file-like object.
+    Returns (array, profile).
     """
+    if hasattr(path_or_file, "read"):  
+        # It's a file-like object (e.g., from Streamlit uploader)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
+        tmp.write(path_or_file.read())
+        tmp.flush()
+        tmp.close()
+        path = tmp.name
+    else:
+        # It's already a file path
+        path = str(path_or_file)
+
     with rasterio.open(path) as src:
         arr = src.read(1)
         profile = src.profile
+
     return arr, profile
+
+
+def load_raster(path_or_file):
+    """
+    Load a single raster and return (array, profile).
+    Works with local paths or file-like objects (Streamlit upload).
+    """
+    return _open_as_raster(path_or_file)
 
 
 def load_targets(target_paths, align=True):
     """
     Load multi-temporal land cover rasters.
     Args:
-        target_paths (list[str]): Paths to land cover rasters (e.g., yearly).
+        target_paths (list[str or file-like]): Paths or uploaded files.
         align (bool): Whether to align rasters to the first one.
     Returns:
-        list of (array, profile), list of masks
+        arrays, masks, profiles
     """
     raster_list = [load_raster(p) for p in target_paths]
 
     # Align rasters
-    if align:
+    if align and len(raster_list) > 1:
         raster_list = align_rasters(raster_list)
 
     arrays, profiles = zip(*raster_list)
@@ -38,7 +60,7 @@ def load_predictors(predictor_paths, ref_profile=None, align=True):
     """
     Load predictor rasters, align them to a reference (if provided).
     Args:
-        predictor_paths (list[str]): Paths to predictor rasters.
+        predictor_paths (list[str or file-like]): Paths or uploaded files.
         ref_profile (dict): Reference raster profile (from target).
         align (bool): Whether to align predictors to the reference profile.
     Returns:
@@ -48,8 +70,8 @@ def load_predictors(predictor_paths, ref_profile=None, align=True):
 
     if ref_profile and align:
         aligned = []
+        from .utils import resample_raster
         for arr, prof in raster_list:
-            from .utils import resample_raster
             aligned_arr = resample_raster(arr, prof, ref_profile)
             aligned.append((aligned_arr, ref_profile))
         raster_list = aligned
@@ -58,6 +80,7 @@ def load_predictors(predictor_paths, ref_profile=None, align=True):
     stack = np.stack(arrays, axis=0)  # shape = [n_predictors, H, W]
 
     return stack
+
 
 def prepare_training_data(predictors, target, mask=None):
     """
@@ -90,6 +113,7 @@ def prepare_training_data(predictors, target, mask=None):
         y = y[valid]
 
     return X, y
+
 
 # import rasterio
 # import numpy as np
