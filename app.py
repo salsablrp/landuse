@@ -36,6 +36,18 @@ st.sidebar.button("🔄 Reset Workflow", on_click=reset_all)
 # --- STEP 1: Upload Data ---
 st.header("Step 1: Upload Data")
 
+# --- Save uploaded files to temp and return paths ---
+def save_uploaded_files(uploaded_files):
+    tmp_dir = tempfile.mkdtemp()
+    file_paths = []
+    for f in uploaded_files:
+        out_path = os.path.join(tmp_dir, f.name)
+        with open(out_path, "wb") as fp:
+            # f.seek(0)
+            fp.write(f.read())
+        file_paths.append(out_path)
+    return file_paths
+
 st.subheader("1a. Upload Land Cover Targets (≥2 years)")
 uploaded_targets = st.file_uploader(
     "Upload land cover rasters (e.g., landcover_2020.tif, landcover_2021.tif)",
@@ -48,8 +60,10 @@ if uploaded_targets:
     if len(uploaded_targets) < 2:
         st.warning("⚠️ Please upload at least 2 land cover rasters from different years.")
     else:
-        st.session_state.targets = data_loader.load_targets(uploaded_targets)
-        st.success(f"Loaded {len(uploaded_targets)} land cover rasters.")
+        target_paths = save_uploaded_files(uploaded_targets)
+        st.session_state.targets = data_loader.load_targets(target_paths)
+        st.session_state["target_paths"] = target_paths  # store for later reuse
+        st.success(f"Loaded {len(target_paths)} land cover rasters.")
 
 st.subheader("1b. Upload Predictor Rasters")
 uploaded_predictors = st.file_uploader(
@@ -63,25 +77,15 @@ if uploaded_predictors:
     if st.session_state.targets is None:
         st.error("⚠️ Please upload target raster(s) before predictors.")
     else:
+        predictor_paths = save_uploaded_files(uploaded_predictors)
+        st.session_state["predictor_paths"] = predictor_paths  # store for later reuse
+
         _, _, target_profiles = st.session_state.targets
         ref_profile = target_profiles[0]
         st.session_state.predictors = data_loader.load_predictors(
-            uploaded_predictors, ref_profile=ref_profile
+            predictor_paths, ref_profile=ref_profile
         )
-        st.success(f"Loaded {len(uploaded_predictors)} predictor rasters.")
-
-# --- Save uploaded files to temp and return paths ---
-def save_uploaded_files(uploaded_files):
-    tmp_dir = tempfile.mkdtemp()
-    file_paths = []
-    for f in uploaded_files:
-        out_path = os.path.join(tmp_dir, f.name)
-        with open(out_path, "wb") as fp:
-            # f.seek(0)
-            fp.write(f.read())
-        file_paths.append(out_path)
-    return file_paths
-
+        st.success(f"Loaded {len(predictor_paths)} predictor rasters.")
 
 # --- Main Upload Handling ---
 if uploaded_targets and uploaded_predictors:
@@ -96,12 +100,12 @@ if uploaded_targets and uploaded_predictors:
             st.session_state.show_maps = True
 
     # Save files once
-    target_paths = save_uploaded_files(uploaded_targets)
-    predictor_paths = save_uploaded_files(uploaded_predictors)
+    target_paths = st.session_state.get("target_paths", [])
+    predictor_paths = st.session_state.get("predictor_paths", [])
 
     # Load data for consistency
-    arrays, masks, profiles = data_loader.load_targets(target_paths)
-    predictors = data_loader.load_predictors(predictor_paths, ref_profile=profiles[0])
+    arrays, masks, profiles = st.session_state.targets
+    predictors = st.session_state.predictors
 
     # --- Conditional Map Preview ---
     if st.session_state.get("show_maps", False):
@@ -111,6 +115,7 @@ if uploaded_targets and uploaded_predictors:
 
         # Add target rasters
         for i, path in enumerate(target_paths):
+            name = os.path.basename(path)
             try:
                 m.add_raster(path, layer_name=f"Target {i+1}")
             except Exception as e:
@@ -118,6 +123,7 @@ if uploaded_targets and uploaded_predictors:
 
         # Add predictor rasters
         for i, path in enumerate(predictor_paths):
+            name = os.path.basename(path)
             try:
                 m.add_raster(path, layer_name=f"Predictor {i+1}")
             except Exception as e:
