@@ -3,8 +3,6 @@ import leafmap
 import numpy as np
 import rasterio
 
-import tempfile
-import os
 from landuse_tool import data_loader, utils, training, prediction, scenarios, visualization
 
 st.set_page_config(layout="wide")
@@ -36,18 +34,6 @@ st.sidebar.button("🔄 Reset Workflow", on_click=reset_all)
 # --- STEP 1: Upload Data ---
 st.header("Step 1: Upload Data")
 
-# --- Save uploaded files to temp and return paths ---
-def save_uploaded_files(uploaded_files):
-    tmp_dir = tempfile.mkdtemp()
-    file_paths = []
-    for f in uploaded_files:
-        out_path = os.path.join(tmp_dir, f.name)
-        with open(out_path, "wb") as fp:
-            # f.seek(0)
-            fp.write(f.read())
-        file_paths.append(out_path)
-    return file_paths
-
 st.subheader("1a. Upload Land Cover Targets (≥2 years)")
 uploaded_targets = st.file_uploader(
     "Upload land cover rasters (e.g., landcover_2020.tif, landcover_2021.tif)",
@@ -57,13 +43,11 @@ uploaded_targets = st.file_uploader(
 )
 
 if uploaded_targets:
-    if len(uploaded_targets) < 2:
-        st.warning("⚠️ Please upload at least 2 land cover rasters from different years.")
-    else:
-        target_paths = save_uploaded_files(uploaded_targets)
-        st.session_state.targets = data_loader.load_targets(target_paths)
-        st.session_state["target_paths"] = target_paths  # store for later reuse
-        st.success(f"Loaded {len(target_paths)} land cover rasters.")
+    arrays, masks, profiles = data_loader.load_targets(uploaded_targets, align=True)
+    st.session_state.targets = (arrays, masks, profiles)
+    st.session_state.profiles = profiles
+    st.success(f"Loaded {len(arrays)} target rasters.")
+
 
 st.subheader("1b. Upload Predictor Rasters")
 uploaded_predictors = st.file_uploader(
@@ -73,17 +57,12 @@ uploaded_predictors = st.file_uploader(
     key="predictors_uploader"
 )
 
-if uploaded_predictors:
-    predictor_paths = save_uploaded_files(uploaded_predictors)
-    st.session_state["predictor_paths"] = predictor_paths  # store for later reuse
-
-    _, _, target_profiles = st.session_state.targets
-    ref_profile = target_profiles[0]
-    st.session_state.predictors = data_loader.load_predictors(
-        predictor_paths, ref_profile=ref_profile
-    )
-    st.success(f"Loaded {len(predictor_paths)} predictor rasters.")
-
+if uploaded_predictors and st.session_state.targets:
+    ref_profile = st.session_state.profiles[0]
+    predictors = data_loader.load_predictors(uploaded_predictors, ref_profile)
+    st.session_state.predictors = predictors
+    st.success(f"Loaded predictors stack with shape {predictors.shape}")
+    
 # --- Main Upload Handling ---
 if uploaded_targets and uploaded_predictors:
 
