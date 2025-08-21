@@ -204,7 +204,13 @@ if st.session_state.step >= 2:
             arrays, masks, profiles = st.session_state.targets
             mask = masks[-1]
             ref_profile = profiles[-1]
-            predictors = st.session_state.predictors
+
+            if "scenario_stack" in st.session_state:
+                predictors = st.session_state.scenario_stack
+                st.info("📊 Using scenario-adjusted predictors for prediction.")
+            else:
+                predictors = st.session_state.predictors
+                st.info("📊 Using original predictors for prediction.")
 
             # Reset all success states on re-run
             st.session_state.prediction_success = False
@@ -230,6 +236,9 @@ if st.session_state.step >= 2:
             
             st.success("✅ Prediction complete!")
             st.session_state.prediction_success = True
+
+            # Optional: clear scenario after use
+            st.session_state.pop("scenario_stack", None)
 
     if "predicted" in st.session_state:
         col1, col2 = st.columns(2)
@@ -311,19 +320,19 @@ if st.session_state.step >= 3:
             st.session_state.scenario_changes = []
 
     if st.button("🌱 Apply Scenario"):
-        from scenarios import apply_scenario
-
-        predictors = st.session_state.predictors
-        filenames = [os.path.basename(f) for f in st.session_state.predictor_paths]
-
-        scenario_def = {
-            "name": scenario_name,
-            "changes": st.session_state.scenario_changes
-        }
-
-        scenario_stack = apply_scenario(predictors, filenames, scenario_def)
+        from landuse_tool.scenarios import apply_scenario
+        scenario_stack = scenarios.apply_scenario(
+            stack=st.session_state.predictors,
+            predictor_files=predictor_filenames,
+            scenario_def={
+                "name": scenario_name,
+                "changes": st.session_state.scenario_changes
+            }
+        )
         st.session_state.scenario_stack = scenario_stack
+        st.session_state.prediction_success = False  # Reset old success flags
         st.success(f"✅ Scenario '{scenario_name}' applied!")
+        st.info("➡️ Now return to Step 3 and run prediction.")
 
     if st.button("➡️ Proceed to Visualization"):
         st.session_state.step = 4
