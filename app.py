@@ -128,21 +128,47 @@ if uploaded_targets and uploaded_predictors:
 
         m.to_streamlit(height=500)
 
-# --- STEP 2: Training ---
+
+# --- STEP 2: Sampling & Training ---
 if st.session_state.step >= 1:
-    st.header("Step 2: Train Model")
-    if st.button("⚡ Train Random Forest"):
-        # Use latest target for training
-        arrays, masks, profiles = st.session_state.targets
-        latest_target = arrays[-1]
-        latest_mask = masks[-1]
-        predictors = st.session_state.predictors
+    st.header("Step 2: Sample and Train Model")
 
-        X, y = data_loader.prepare_training_data(predictors, latest_target, latest_mask)
-        model = training.train_rf(X, y)
-        st.session_state.model = model
-        st.success("✅ Model trained!")
+    if st.button("📥 Sample Training Data"):
+        with st.spinner("Sampling training data..."):
 
+            target_paths = st.session_state.get("target_paths", [])
+            predictor_paths = st.session_state.get("predictor_paths", [])
+
+            if not target_paths or not predictor_paths:
+                st.error("❌ Missing target or predictor raster paths.")
+            else:
+                latest_target_path = target_paths[-1]  # use most recent year
+
+                try:
+                    X, y = data_loader.sample_training_data(
+                        target_path=latest_target_path,
+                        predictor_paths=predictor_paths,
+                        total_samples=5000,   # you can later make this a sidebar input
+                        window_size=512       # adjustable too if needed
+                    )
+                    st.session_state.X = X
+                    st.session_state.y = y
+                    st.success(f"✅ Sampled {len(X)} training points from raster.")
+                except Exception as e:
+                    st.error(f"Sampling failed: {e}")
+
+    # --- Train Model ---
+    if "X" in st.session_state and "y" in st.session_state:
+        if st.button("⚡ Train Random Forest"):
+            with st.spinner("Training model..."):
+                model, metrics = training.train_rf(
+                    st.session_state.X,
+                    st.session_state.y
+                )
+                st.session_state.model = model
+                st.success("✅ Model trained!")
+
+    # --- Proceed ---
     if st.button("➡️ Proceed to Prediction"):
         st.session_state.step = 2
 
