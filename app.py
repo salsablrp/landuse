@@ -198,7 +198,7 @@ elif st.session_state.active_step == 3:
     """)
 
     if st.session_state.model is None:
-        st.warning("Please train a model first.")
+        st.warning("⚠️ Please train a model first.")
     else:
         if st.button("🛰️ Run Prediction"):
             with st.spinner("Running prediction..."):
