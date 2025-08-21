@@ -133,6 +133,7 @@ if uploaded_targets and uploaded_predictors:
 if st.session_state.step >= 1:
     st.header("Step 2: Sample and Train Model")
 
+    # --- Sampling ---
     if st.button("📥 Sample Training Data"):
         with st.spinner("Sampling training data..."):
 
@@ -148,16 +149,21 @@ if st.session_state.step >= 1:
                     X, y = data_loader.sample_training_data(
                         target_path=latest_target_path,
                         predictor_paths=predictor_paths,
-                        total_samples=5000,   # you can later make this a sidebar input
-                        window_size=512       # adjustable too if needed
+                        total_samples=5000,
+                        window_size=512
                     )
                     st.session_state.X = X
                     st.session_state.y = y
-                    st.success(f"✅ Sampled {len(X)} training points from raster.")
+                    st.session_state.sample_success = True  # ✅ Save success flag
                 except Exception as e:
                     st.error(f"Sampling failed: {e}")
+                    st.session_state.sample_success = False
 
-    # --- Train Model ---
+    # --- Show sampling success ---
+    if st.session_state.get("sample_success", False):
+        st.success(f"✅ Sampled {len(st.session_state.X)} training points from raster.")
+
+    # --- Training ---
     if "X" in st.session_state and "y" in st.session_state:
         if st.button("⚡ Train Random Forest"):
             with st.spinner("Training model..."):
@@ -166,7 +172,11 @@ if st.session_state.step >= 1:
                     st.session_state.y
                 )
                 st.session_state.model = model
-                st.success("✅ Model trained!")
+                st.session_state.train_success = True  # ✅ Save success flag
+
+    # --- Show training success ---
+    if st.session_state.get("train_success", False):
+        st.success("✅ Model trained!")
 
     # --- Proceed ---
     if st.button("➡️ Proceed to Prediction"):
@@ -176,47 +186,144 @@ if st.session_state.step >= 1:
 # --- STEP 3: Prediction ---
 if st.session_state.step >= 2:
     st.header("Step 3: Predict Land Cover")
+
+    # Show success messages
+    if st.session_state.get("prediction_success"):
+        st.success("✅ Prediction complete!")
+
+    if st.session_state.get("geotiff_saved"):
+        st.success(f"✅ Saved GeoTIFF: `{st.session_state.geotiff_saved}`")
+
+    if st.session_state.get("png_saved"):
+        st.success(f"✅ Saved PNG: `{st.session_state.png_saved}`")
+
     if st.session_state.model is None:
         st.warning("⚠️ Please train a model first.")
     else:
         if st.button("🛰️ Run Prediction"):
             arrays, masks, profiles = st.session_state.targets
-            _, _, ref_profile = st.session_state.targets
             mask = masks[-1]
-
+            ref_profile = profiles[-1]
             predictors = st.session_state.predictors
-            predicted = prediction.predict_map(st.session_state.model, predictors, mask)
-            st.session_state.predicted = predicted
-            vis_path = visualization.save_prediction_as_tif(predicted, ref_profile[-1])
-            m = leafmap.Map(center=[48.0, 67.0], zoom=4)
-            m.add_raster(vis_path, layer_name="Predicted Land Cover")
-            m.to_streamlit(height=500)
-            st.success("Prediction complete!")
 
-    if st.button("➡️ Proceed to Scenarios"):
-        st.session_state.step = 3
+            # Reset all success states on re-run
+            st.session_state.prediction_success = False
+            st.session_state.png_saved = None
+            st.session_state.geotiff_saved = None
+
+            with st.spinner("Running prediction..."):
+                progress_bar = st.progress(0.0)
+
+                def update_progress(p):
+                    progress_bar.progress(p)
+
+                predicted = prediction.predict_map(
+                    model=st.session_state.model,
+                    X_stack=predictors,
+                    mask=mask,
+                    ref_profile=ref_profile,
+                    progress_callback=update_progress
+                )
+
+                st.session_state.predicted = predicted
+                st.session_state.ref_profile = ref_profile
+            
+            st.success("✅ Prediction complete!")
+            st.session_state.prediction_success = True
+
+    if "predicted" in st.session_state:
+        col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
+
+        with col1:
+            if st.button("🖼️ Save as PNG"):
+                path = visualization.save_prediction_as_png(
+                    st.session_state.predicted
+                )
+                st.session_state.png_saved = os.path.basename(path)
+
+                st.success(f"✅ Saved PNG: `{st.session_state.png_saved}`")
+
+        with col2:
+            if st.button("💾 Save as GeoTIFF"):
+                path = visualization.save_prediction_as_tif(
+                    st.session_state.predicted,
+                    st.session_state.ref_profile,
+                    temp=False
+                )
+                st.session_state.geotiff_saved = os.path.basename(path)
+
+                st.success(f"✅ Saved GeoTIFF: `{st.session_state.geotiff_saved}`")
+
+        with col3:
+            if st.button("➡️ Proceed to Scenarios"):
+                st.session_state.step = 3
+
+        with col4:
+            if st.button("🗺️ Visualize Predicted Map"):
+                m = leafmap.Map(center=[48.0, 67.0], zoom=4)
+                vis_path = visualization.save_prediction_as_tif(
+                    st.session_state.predicted,
+                    st.session_state.ref_profile,
+                    temp=True
+                )
+                m.add_raster(vis_path, layer_name="Predicted Land Cover")
+                m.to_streamlit(height=500)
 
 
 # --- STEP 4: Scenarios ---
 if st.session_state.step >= 3:
     st.header("Step 4: Run Scenarios")
 
-    scenario_name = st.text_input("Scenario name", "Afforestation")
-    layer_ops = st.text_area(
-        "Define layer adjustments (JSON-style dict)",
-        """{
-    "distance_to_roads": { "operator": "increase", "value": 1000 },
-    "biomass": { "operator": "increase", "value": 0.2 }
-}"""
-    )
+    predictor_files = st.session_state.get("predictor_paths", [])
+    predictor_filenames = [os.path.basename(p) for p in predictor_files]
+
+    if "scenario_changes" not in st.session_state:
+        st.session_state.scenario_changes = []
+
+    scenario_name = st.text_input("Scenario name", "My Scenario")
+
+    st.markdown("### ➕ Add a Change")
+    col1, col2, col3 = st.columns([2, 2, 1])
+
+    with col1:
+        selected_layer = st.selectbox("Layer", options=predictor_filenames, key="selected_layer")
+
+    with col2:
+        selected_op = st.selectbox("Operator", options=["multiply", "add", "subtract", "divide"], key="selected_op")
+
+    with col3:
+        value = st.number_input("Value", value=1.0, key="selected_value")
+
+    if st.button("➕ Add Change"):
+        st.session_state.scenario_changes.append({
+            "layer": selected_layer,
+            "op": selected_op,
+            "value": value
+        })
+
+    if st.session_state.scenario_changes:
+        st.markdown("### ✅ Current Changes:")
+        for i, change in enumerate(st.session_state.scenario_changes):
+            st.write(f"{i+1}. `{change['layer']}` **{change['op']}** {change['value']}")
+
+        if st.button("🧹 Clear All Changes"):
+            st.session_state.scenario_changes = []
 
     if st.button("🌱 Apply Scenario"):
+        from scenarios import apply_scenario
+
         predictors = st.session_state.predictors
-        import json
-        adjustments = json.loads(layer_ops)
-        scenario_stack = scenarios.apply_scenario(predictors, adjustments)
+        filenames = [os.path.basename(f) for f in st.session_state.predictor_paths]
+
+        scenario_def = {
+            "name": scenario_name,
+            "changes": st.session_state.scenario_changes
+        }
+
+        scenario_stack = apply_scenario(predictors, filenames, scenario_def)
         st.session_state.scenario_stack = scenario_stack
-        st.success(f"Scenario '{scenario_name}' applied!")
+        st.success(f"✅ Scenario '{scenario_name}' applied!")
 
     if st.button("➡️ Proceed to Visualization"):
         st.session_state.step = 4
