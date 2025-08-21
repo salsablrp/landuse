@@ -60,11 +60,15 @@ uploaded_predictors = st.file_uploader(
 )
 
 if uploaded_predictors:
-    # Align predictors to the first target raster
-    _, _, target_profiles = st.session_state.targets
-    ref_profile = target_profiles[0]
-    st.session_state.predictors = data_loader.load_predictors(uploaded_predictors, ref_profile)
-    st.success(f"Loaded {len(uploaded_predictors)} predictor rasters.")
+    if st.session_state.targets is None:
+        st.error("⚠️ Please upload target raster(s) before predictors.")
+    else:
+        _, _, target_profiles = st.session_state.targets
+        ref_profile = target_profiles[0]
+        st.session_state.predictors = data_loader.load_predictors(
+            uploaded_predictors, ref_profile=ref_profile
+        )
+        st.success(f"Loaded {len(uploaded_predictors)} predictor rasters.")
 
 # --- Save uploaded files to temp and return paths ---
 def save_uploaded_files(uploaded_files):
