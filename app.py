@@ -17,6 +17,8 @@ if "targets" not in st.session_state:
     st.session_state.targets = None
 if "predictors" not in st.session_state:
     st.session_state.predictors = None
+if "show_maps" not in st.session_state:
+    st.session_state.show_maps = False
 if "model" not in st.session_state:
     st.session_state.model = None
 if "predicted" not in st.session_state:
@@ -71,7 +73,7 @@ def save_uploaded_files(uploaded_files):
     for f in uploaded_files:
         out_path = os.path.join(tmp_dir, f.name)
         with open(out_path, "wb") as fp:
-            f.seek(0)
+            # f.seek(0)
             fp.write(f.read())
         file_paths.append(out_path)
     return file_paths
@@ -105,11 +107,17 @@ if uploaded_targets and uploaded_predictors:
 
         # Add target rasters
         for i, path in enumerate(target_paths):
-            m.add_raster(path, layer_name=f"Target {i+1}")
+            try:
+                m.add_raster(path, layer_name=f"Target {i+1}")
+            except Exception as e:
+                st.error(f"Error loading target raster {i+1}: {e}")
 
         # Add predictor rasters
         for i, path in enumerate(predictor_paths):
-            m.add_raster(path, layer_name=f"Predictor {i+1}")
+            try:
+                m.add_raster(path, layer_name=f"Predictor {i+1}")
+            except Exception as e:
+                st.error(f"Error loading predictor raster {i+1}: {e}")
 
         m.to_streamlit(height=500)
 
