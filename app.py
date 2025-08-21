@@ -74,18 +74,15 @@ uploaded_predictors = st.file_uploader(
 )
 
 if uploaded_predictors:
-    if st.session_state.targets is None:
-        st.error("⚠️ Please upload target raster(s) before predictors.")
-    else:
-        predictor_paths = save_uploaded_files(uploaded_predictors)
-        st.session_state["predictor_paths"] = predictor_paths  # store for later reuse
+    predictor_paths = save_uploaded_files(uploaded_predictors)
+    st.session_state["predictor_paths"] = predictor_paths  # store for later reuse
 
-        _, _, target_profiles = st.session_state.targets
-        ref_profile = target_profiles[0]
-        st.session_state.predictors = data_loader.load_predictors(
-            predictor_paths, ref_profile=ref_profile
-        )
-        st.success(f"Loaded {len(predictor_paths)} predictor rasters.")
+    _, _, target_profiles = st.session_state.targets
+    ref_profile = target_profiles[0]
+    st.session_state.predictors = data_loader.load_predictors(
+        predictor_paths, ref_profile=ref_profile
+    )
+    st.success(f"Loaded {len(predictor_paths)} predictor rasters.")
 
 # --- Main Upload Handling ---
 if uploaded_targets and uploaded_predictors:
