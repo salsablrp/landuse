@@ -1,32 +1,31 @@
 import rasterio
 from rasterio.windows import Window
+from rasterio.io import MemoryFile
 import numpy as np
 from collections import Counter
 from tqdm import tqdm
 
-import tempfile
-from pathlib import Path
 from .utils import reproject_raster, align_rasters, create_mask
 
 def _open_as_raster(path_or_file):
     """
-    Helper to open a raster from a file path or an uploaded file-like object.
+    Open a raster either from:
+      - an uploaded file-like object (Streamlit uploader)
+      - a local file path
     Returns (array, profile).
     """
     if hasattr(path_or_file, "read"):  
-        # It's a file-like object (e.g., from Streamlit uploader)
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
-        tmp.write(path_or_file.read())
-        tmp.flush()
-        tmp.close()
-        path = tmp.name
+        # Case 1: file-like object (Streamlit upload)
+        file_bytes = path_or_file.read()
+        with MemoryFile(file_bytes) as memfile:
+            with memfile.open() as src:
+                arr = src.read(1)
+                profile = src.profile
     else:
-        # It's already a file path
-        path = str(path_or_file)
-
-    with rasterio.open(path) as src:
-        arr = src.read(1)
-        profile = src.profile
+        # Case 2: local file path (string/Path)
+        with rasterio.open(str(path_or_file)) as src:
+            arr = src.read(1)
+            profile = src.profile
 
     return arr, profile
 
@@ -34,25 +33,23 @@ def _open_as_raster(path_or_file):
 def load_raster(path_or_file):
     """
     Load a single raster and return (array, profile).
-    Works with local paths or file-like objects (Streamlit upload).
     """
     return _open_as_raster(path_or_file)
 
 
-def load_targets(target_paths, align=True):
+def load_targets(target_files, align=True):
     """
     Load multi-temporal land cover rasters.
     Args:
-        target_paths (list[str or file-like]): Paths or uploaded files.
-        align (bool): Whether to align rasters to the first one.
+        target_files (list[file-like or str]): Uploaded files or file paths.
     Returns:
         arrays, masks, profiles
     """
-    raster_list = [load_raster(p) for p in target_paths]
+    raster_list = [load_raster(f) for f in target_files]
 
-    # Align rasters
+    # Optional alignment
     if align and len(raster_list) > 1:
-        raster_list = align_rasters(raster_list)
+        raster_list = align_rasters(raster_list)  # assumes you have this util
 
     arrays, profiles = zip(*raster_list)
     masks = [create_mask(arr, nodata=prof.get("nodata")) for arr, prof in raster_list]
@@ -60,17 +57,12 @@ def load_targets(target_paths, align=True):
     return arrays, masks, profiles
 
 
-def load_predictors(predictor_paths, ref_profile=None, align=True):
+def load_predictors(predictor_files, ref_profile=None, align=True):
     """
     Load predictor rasters, align them to a reference (if provided).
-    Args:
-        predictor_paths (list[str or file-like]): Paths or uploaded files.
-        ref_profile (dict): Reference raster profile (from target).
-        align (bool): Whether to align predictors to the reference profile.
-    Returns:
-        np.ndarray: stacked predictors [bands, height, width]
+    Returns stacked predictors [bands, height, width].
     """
-    raster_list = [load_raster(p) for p in predictor_paths]
+    raster_list = [load_raster(f) for f in predictor_files]
 
     if ref_profile and align:
         aligned = []
@@ -81,7 +73,7 @@ def load_predictors(predictor_paths, ref_profile=None, align=True):
         raster_list = aligned
 
     arrays, _ = zip(*raster_list)
-    stack = np.stack(arrays, axis=0)  # shape = [n_predictors, H, W]
+    stack = np.stack(arrays, axis=0)
 
     return stack
 

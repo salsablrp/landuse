@@ -1,352 +1,323 @@
 import streamlit as st
-import leafmap
-import numpy as np
-import rasterio
-
-import tempfile
 import os
+import leafmap
+
 from landuse_tool import data_loader, utils, training, prediction, scenarios, visualization
 
 st.set_page_config(layout="wide")
 st.title("🌍 Land Use Monitoring & Prediction Tool")
 
-# --- SESSION STATE RESET ---
+# --- Initialize Session State ---
 if "step" not in st.session_state:
     st.session_state.step = 0
-if "targets" not in st.session_state:
-    st.session_state.targets = None
-if "predictors" not in st.session_state:
-    st.session_state.predictors = None
-if "show_maps" not in st.session_state:
-    st.session_state.show_maps = False
-if "model" not in st.session_state:
-    st.session_state.model = None
-if "predicted" not in st.session_state:
-    st.session_state.predicted = None
-if "scenario_stack" not in st.session_state:
-    st.session_state.scenario_stack = None
 
+# Store all necessary session states
+defaults = {
+    "targets": None,
+    "predictors": None,
+    "show_maps": False,
+    "model": None,
+    "predicted": None,
+    "scenario_stack": None,
+    "sample_success": False,
+    "train_success": False,
+    "prediction_success": False,
+    "geotiff_saved": None,
+    "png_saved": None,
+    "scenario_changes": [],
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# --- Reset Workflow ---
 def reset_all():
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    st.session_state.clear()
+    st.session_state.step = 0
 
 st.sidebar.button("🔄 Reset Workflow", on_click=reset_all)
 
+# --- Sidebar Navigation ---
+steps = [
+    "🏡 Home",
+    "1️⃣ Upload Data",
+    "2️⃣ Training",
+    "3️⃣ Prediction",
+    "4️⃣ Scenarios",
+    "5️⃣ Visualization"
+]
 
-# --- STEP 1: Upload Data ---
-st.header("Step 1: Upload Data")
+# Buttons for each step
+st.sidebar.markdown("### 📋 Navigation")
+for i, label in enumerate(steps):
+    if st.sidebar.button(label):
+        st.session_state.active_step = i
 
-# --- Save uploaded files to temp and return paths ---
-def save_uploaded_files(uploaded_files):
-    tmp_dir = tempfile.mkdtemp()
-    file_paths = []
-    for f in uploaded_files:
-        out_path = os.path.join(tmp_dir, f.name)
-        with open(out_path, "wb") as fp:
-            # f.seek(0)
-            fp.write(f.read())
-        file_paths.append(out_path)
-    return file_paths
+# Set active step
+if "active_step" not in st.session_state:
+    st.session_state.active_step = 0
 
-st.subheader("1a. Upload Land Cover Targets (≥2 years)")
-uploaded_targets = st.file_uploader(
-    "Upload land cover rasters (e.g., landcover_2020.tif, landcover_2021.tif)",
-    type=["tif", "tiff"],
-    accept_multiple_files=True,
-    key="targets_uploader"
-)
+# --- Step 0: Landing Page ---
+if st.session_state.active_step == 0:
+    st.header("👋 Welcome to the Land Use Monitoring & Prediction Tool")
+    st.markdown("""
+    This tool helps you analyze and forecast land cover change using remote sensing data.
+    
+    **Workflow Overview:**
+    1. Upload historical land cover and predictor rasters.
+    2. Train a model on these datasets.
+    3. Predict future land cover based on current conditions.
+    4. Simulate different scenarios by modifying predictors.
+    5. Visualize and export the results.
 
-if uploaded_targets:
-    if len(uploaded_targets) < 2:
-        st.warning("⚠️ Please upload at least 2 land cover rasters from different years.")
-    else:
-        target_paths = save_uploaded_files(uploaded_targets)
-        st.session_state.targets = data_loader.load_targets(target_paths)
-        st.session_state["target_paths"] = target_paths  # store for later reuse
-        st.success(f"Loaded {len(target_paths)} land cover rasters.")
+    👈 Use the sidebar to begin with **Step 1**.
+    """)
 
-st.subheader("1b. Upload Predictor Rasters")
-uploaded_predictors = st.file_uploader(
-    "Upload predictor rasters (e.g., elevation.tif, distance_to_roads.tif)",
-    type=["tif", "tiff"],
-    accept_multiple_files=True,
-    key="predictors_uploader"
-)
+# --- Step 1: Upload Data ---
+elif st.session_state.active_step == 1:
+    st.header("Step 1: Upload Data")
 
-if uploaded_predictors:
-    predictor_paths = save_uploaded_files(uploaded_predictors)
-    st.session_state["predictor_paths"] = predictor_paths  # store for later reuse
+    st.markdown("""
+    In this step, you will upload the required raster datasets:
 
-    _, _, target_profiles = st.session_state.targets
-    ref_profile = target_profiles[0]
-    st.session_state.predictors = data_loader.load_predictors(
-        predictor_paths, ref_profile=ref_profile
+    - **Land cover targets** from at least two different years.
+    - **Predictor variables**, such as elevation, slope, distance to roads, etc.
+
+    These datasets will be aligned and prepared for training in the next step.
+    """)
+
+    st.subheader("1a. Upload Land Cover Targets (≥2 years)")
+    uploaded_targets = st.file_uploader(
+        "Upload land cover rasters",
+        type=["tif", "tiff"],
+        accept_multiple_files=True,
+        key="targets_uploader"
     )
-    st.success(f"Loaded {len(predictor_paths)} predictor rasters.")
 
-# --- Main Upload Handling ---
-if uploaded_targets and uploaded_predictors:
+    if uploaded_targets:
+        arrays, masks, profiles = data_loader.load_targets(uploaded_targets, align=True)
+        st.session_state.targets = (arrays, masks, profiles)
+        st.session_state.profiles = profiles
+        st.success(f"Loaded {len(arrays)} target rasters.")
 
-    # Show action buttons
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("➡️ Proceed to Training"):
-            st.session_state.step = 1
-    with col2:
-        if st.button("🗺️ Visualize Targets & Predictors Maps"):
-            st.session_state.show_maps = True
+    st.subheader("1b. Upload Predictor Rasters")
+    uploaded_predictors = st.file_uploader(
+        "Upload predictor rasters",
+        type=["tif", "tiff"],
+        accept_multiple_files=True,
+        key="predictors_uploader"
+    )
 
-    # Save files once
-    target_paths = st.session_state.get("target_paths", [])
-    predictor_paths = st.session_state.get("predictor_paths", [])
+    if uploaded_predictors and st.session_state.targets:
+        ref_profile = st.session_state.profiles[0]
+        predictors = data_loader.load_predictors(uploaded_predictors, ref_profile)
+        st.session_state.predictors = predictors
+        st.success(f"Loaded predictors stack with shape {predictors.shape}")
 
-    # Load data for consistency
-    arrays, masks, profiles = st.session_state.targets
-    predictors = st.session_state.predictors
+    if uploaded_targets and uploaded_predictors:
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("➡️ Proceed to Training"):
+                st.session_state.step = 1
+                st.session_state.active_step = 2
+        with col2:
+            if st.button("🗺️ Visualize Maps"):
+                st.session_state.show_maps = True
 
-    # --- Conditional Map Preview ---
-    if st.session_state.get("show_maps", False):
-        st.subheader("🗺️ Rasters Preview")
-
+    if st.session_state.get("show_maps"):
+        st.subheader("🗺️ Map Preview")
         m = leafmap.Map(center=[0, 0], zoom=2)
 
-        # Add target rasters
-        for i, path in enumerate(target_paths):
-            name = os.path.basename(path)
-            try:
-                m.add_raster(path, layer_name=f"Target {i+1}")
-            except Exception as e:
-                st.error(f"Error loading target raster {i+1}: {e}")
-
-        # Add predictor rasters
-        for i, path in enumerate(predictor_paths):
-            name = os.path.basename(path)
-            try:
-                m.add_raster(path, layer_name=f"Predictor {i+1}")
-            except Exception as e:
-                st.error(f"Error loading predictor raster {i+1}: {e}")
+        # Optional: add example visualization (you may need to customize)
+        # m.add_raster("your_raster_path.tif", layer_name="Layer")
 
         m.to_streamlit(height=500)
 
-
-# --- STEP 2: Sampling & Training ---
-if st.session_state.step >= 1:
+# --- Step 2: Training ---
+elif st.session_state.active_step == 2:
     st.header("Step 2: Sample and Train Model")
 
-    # --- Sampling ---
-    if st.button("📥 Sample Training Data"):
-        with st.spinner("Sampling training data..."):
+    st.markdown("""
+    Here you will:
 
-            target_paths = st.session_state.get("target_paths", [])
-            predictor_paths = st.session_state.get("predictor_paths", [])
+    - Sample training data points from the latest land cover raster.
+    - Train a **Random Forest** model using the sampled data and predictors.
 
-            if not target_paths or not predictor_paths:
-                st.error("❌ Missing target or predictor raster paths.")
-            else:
-                latest_target_path = target_paths[-1]  # use most recent year
+    This model will then be used to predict future land cover changes.
+    """)
 
+    predictor_files = st.session_state.get("predictor_paths", [])
+    target_files = st.session_state.get("target_paths", [])
+    if not predictor_files and not target_files:
+        st.warning("⚠️ No files found. Go back to Step 1 and upload them.")
+    else:
+        if st.button("📥 Sample Training Data"):
+            with st.spinner("Sampling training data..."):
                 try:
+                    target_paths = st.session_state.get("target_paths", [])
+                    predictor_paths = st.session_state.get("predictor_paths", [])
+
+                    latest_target = target_paths[-1]
                     X, y = data_loader.sample_training_data(
-                        target_path=latest_target_path,
-                        predictor_paths=predictor_paths,
+                        latest_target,
+                        predictor_paths,
                         total_samples=5000,
                         window_size=512
                     )
                     st.session_state.X = X
                     st.session_state.y = y
-                    st.session_state.sample_success = True  # ✅ Save success flag
+                    st.session_state.sample_success = True
+                    st.success(f"Sampled {len(X)} training points.")
                 except Exception as e:
                     st.error(f"Sampling failed: {e}")
-                    st.session_state.sample_success = False
 
-    # --- Show sampling success ---
-    if st.session_state.get("sample_success", False):
-        st.success(f"✅ Sampled {len(st.session_state.X)} training points from raster.")
-
-    # --- Training ---
-    if "X" in st.session_state and "y" in st.session_state:
+    if st.session_state.sample_success:
         if st.button("⚡ Train Random Forest"):
             with st.spinner("Training model..."):
-                model, metrics = training.train_rf(
-                    st.session_state.X,
-                    st.session_state.y
-                )
+                model, metrics = training.train_rf(st.session_state.X, st.session_state.y)
                 st.session_state.model = model
-                st.session_state.train_success = True  # ✅ Save success flag
+                st.session_state.train_success = True
+                st.success("Model trained successfully.")
 
-    # --- Show training success ---
-    if st.session_state.get("train_success", False):
-        st.success("✅ Model trained!")
+    if st.session_state.train_success:
+        if st.button("➡️ Proceed to Prediction"):
+            st.session_state.step = 2
+            st.session_state.active_step = 3
 
-    # --- Proceed ---
-    if st.button("➡️ Proceed to Prediction"):
-        st.session_state.step = 2
-
-
-# --- STEP 3: Prediction ---
-if st.session_state.step >= 2:
+# --- Step 3: Prediction ---
+elif st.session_state.active_step == 3:
     st.header("Step 3: Predict Land Cover")
 
-    # Show success messages
-    if st.session_state.get("prediction_success"):
-        st.success("✅ Prediction complete!")
+    st.markdown("""
+    Use the trained model to:
 
-    if st.session_state.get("geotiff_saved"):
-        st.success(f"✅ Saved GeoTIFF: `{st.session_state.geotiff_saved}`")
+    - Predict land cover for a future or unseen time period.
+    - Visualize and export the results in raster formats (GeoTIFF, PNG).
 
-    if st.session_state.get("png_saved"):
-        st.success(f"✅ Saved PNG: `{st.session_state.png_saved}`")
+    Optionally, run predictions using modified scenarios from Step 4.
+    """)
 
     if st.session_state.model is None:
         st.warning("⚠️ Please train a model first.")
     else:
         if st.button("🛰️ Run Prediction"):
-            arrays, masks, profiles = st.session_state.targets
-            mask = masks[-1]
-            ref_profile = profiles[-1]
-
-            if "scenario_stack" in st.session_state:
-                predictors = st.session_state.scenario_stack
-                st.info("📊 Using scenario-adjusted predictors for prediction.")
-            else:
-                predictors = st.session_state.predictors
-                st.info("📊 Using original predictors for prediction.")
-
-            # Reset all success states on re-run
-            st.session_state.prediction_success = False
-            st.session_state.png_saved = None
-            st.session_state.geotiff_saved = None
-
             with st.spinner("Running prediction..."):
-                progress_bar = st.progress(0.0)
-
-                def update_progress(p):
-                    progress_bar.progress(p)
+                arrays, masks, profiles = st.session_state.targets
+                mask = masks[-1]
+                ref_profile = profiles[-1]
+                predictors = st.session_state.scenario_stack or st.session_state.predictors
 
                 predicted = prediction.predict_map(
                     model=st.session_state.model,
                     X_stack=predictors,
                     mask=mask,
-                    ref_profile=ref_profile,
-                    progress_callback=update_progress
+                    ref_profile=ref_profile
                 )
-
                 st.session_state.predicted = predicted
-                st.session_state.ref_profile = ref_profile
-            
-            st.success("✅ Prediction complete!")
-            st.session_state.prediction_success = True
-
-            # Optional: clear scenario after use
-            st.session_state.pop("scenario_stack", None)
-
-    if "predicted" in st.session_state:
-        col1, col2 = st.columns(2)
-        col3, col4 = st.columns(2)
-
-        with col1:
-            if st.button("🖼️ Save as PNG"):
-                path = visualization.save_prediction_as_png(
-                    st.session_state.predicted
-                )
-                st.session_state.png_saved = os.path.basename(path)
-
-                st.success(f"✅ Saved PNG: `{st.session_state.png_saved}`")
-
-        with col2:
-            if st.button("💾 Save as GeoTIFF"):
-                path = visualization.save_prediction_as_tif(
-                    st.session_state.predicted,
-                    st.session_state.ref_profile,
-                    temp=False
-                )
-                st.session_state.geotiff_saved = os.path.basename(path)
-
-                st.success(f"✅ Saved GeoTIFF: `{st.session_state.geotiff_saved}`")
-
-        with col3:
-            if st.button("➡️ Proceed to Scenarios"):
-                st.session_state.step = 3
-
-        with col4:
-            if st.button("🗺️ Visualize Predicted Map"):
-                m = leafmap.Map(center=[48.0, 67.0], zoom=4)
-                vis_path = visualization.save_prediction_as_tif(
-                    st.session_state.predicted,
-                    st.session_state.ref_profile,
-                    temp=True
-                )
-                m.add_raster(vis_path, layer_name="Predicted Land Cover")
-                m.to_streamlit(height=500)
-
-
-# --- STEP 4: Scenarios ---
-if st.session_state.step >= 3:
-    st.header("Step 4: Run Scenarios")
-
-    predictor_files = st.session_state.get("predictor_paths", [])
-    predictor_filenames = [os.path.basename(p) for p in predictor_files]
-
-    if "scenario_changes" not in st.session_state:
-        st.session_state.scenario_changes = []
-
-    scenario_name = st.text_input("Scenario name", "My Scenario")
-
-    st.markdown("### ➕ Add a Change")
-    col1, col2, col3 = st.columns([2, 2, 1])
-
-    with col1:
-        selected_layer = st.selectbox("Layer", options=predictor_filenames, key="selected_layer")
-
-    with col2:
-        selected_op = st.selectbox("Operator", options=["multiply", "add", "subtract", "divide"], key="selected_op")
-
-    with col3:
-        value = st.number_input("Value", value=1.0, key="selected_value")
-
-    if st.button("➕ Add Change"):
-        st.session_state.scenario_changes.append({
-            "layer": selected_layer,
-            "op": selected_op,
-            "value": value
-        })
-
-    if st.session_state.scenario_changes:
-        st.markdown("### ✅ Current Changes:")
-        for i, change in enumerate(st.session_state.scenario_changes):
-            st.write(f"{i+1}. `{change['layer']}` **{change['op']}** {change['value']}")
-
-        if st.button("🧹 Clear All Changes"):
-            st.session_state.scenario_changes = []
-
-    if st.button("🌱 Apply Scenario"):
-        from landuse_tool.scenarios import apply_scenario
-        scenario_stack = scenarios.apply_scenario(
-            stack=st.session_state.predictors,
-            predictor_files=predictor_filenames,
-            scenario_def={
-                "name": scenario_name,
-                "changes": st.session_state.scenario_changes
-            }
-        )
-        st.session_state.scenario_stack = scenario_stack
-        st.session_state.prediction_success = False  # Reset old success flags
-        st.success(f"✅ Scenario '{scenario_name}' applied!")
-        st.info("➡️ Now return to Step 3 and run prediction.")
-
-    if st.button("➡️ Proceed to Visualization"):
-        st.session_state.step = 4
-
-
-# --- STEP 5: Visualization ---
-if st.session_state.step >= 4:
-    st.header("Step 5: Visualization")
+                st.session_state.prediction_success = True
+                st.success("Prediction complete.")
 
     if st.session_state.predicted is not None:
-        st.success("✅ Prediction ready for visualization.")
-        _, _, profiles = st.session_state.targets
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🖼️ Save as PNG"):
+                out = visualization.save_prediction_as_png(st.session_state.predicted)
+                st.success(f"Saved as {out}")
+        with col2:
+            if st.button("💾 Save as GeoTIFF"):
+                out = visualization.save_prediction_as_tif(
+                    st.session_state.predicted,
+                    st.session_state.ref_profile
+                )
+                st.success(f"Saved as {out}")
 
-        # Buttons for visualization
+        if st.button("➡️ Proceed to Scenarios"):
+            st.session_state.step = 3
+            st.session_state.active_step = 4
+
+# --- Step 4: Scenarios ---
+elif st.session_state.active_step == 4:
+    st.header("Step 4: Run Scenarios")
+
+    st.markdown("""
+    Simulate alternative futures by:
+
+    - Modifying predictor layers (e.g., increase population, deforestation).
+    - Applying arithmetic operations to specific rasters.
+
+    The modified predictor stack can be used for scenario-based predictions in Step 3.
+    """)
+
+    predictor_files = st.session_state.get("predictor_paths", [])
+    if not predictor_files:
+        st.warning("⚠️ No predictor files found. Go back to Step 1 and upload them.")
+    else:
+        predictor_filenames = [os.path.basename(p) for p in predictor_files]
+
+        scenario_name = st.text_input("Scenario name", "My Scenario")
+
+        st.markdown("### ➕ Add a Change")
+        col1, col2, col3 = st.columns([2, 2, 1])
+
+        with col1:
+            selected_layer = st.selectbox("Layer", options=predictor_filenames)
+
+        with col2:
+            selected_op = st.selectbox("Operator", options=["multiply", "add", "subtract", "divide"])
+
+        with col3:
+            value = st.number_input("Value", value=1.0)
+
+        if st.button("➕ Add Change"):
+            st.session_state.scenario_changes.append({
+                "layer": selected_layer,
+                "op": selected_op,
+                "value": value
+            })
+            st.success(f"Added: `{selected_layer}` {selected_op} {value}")
+
+        if st.session_state.scenario_changes:
+            st.markdown("### ✅ Current Scenario Changes")
+            for i, change in enumerate(st.session_state.scenario_changes):
+                st.write(f"{i+1}. `{change['layer']}` **{change['op']}** {change['value']}")
+
+            if st.button("🧹 Clear All Changes"):
+                st.session_state.scenario_changes = []
+                st.success("Cleared all scenario changes.")
+
+        if st.button("🌱 Apply Scenario"):
+            scenario_stack = scenarios.apply_scenario(
+                stack=st.session_state.predictors,
+                predictor_files=predictor_filenames,
+                scenario_def={
+                    "name": scenario_name,
+                    "changes": st.session_state.scenario_changes
+                }
+            )
+            st.session_state.scenario_stack = scenario_stack
+            st.success(f"✅ Scenario '{scenario_name}' applied.")
+            st.info("Return to Step 3 to run prediction with the scenario.")
+
+        if st.button("➡️ Proceed to Visualization"):
+            st.session_state.step = 4
+            st.session_state.active_step = 5
+
+# --- Step 5: Visualization ---
+elif st.session_state.active_step == 5:
+    st.header("Step 5: Visualization")
+
+    st.markdown("""
+    Here you can:
+
+    - View predictions as inline maps or images.
+    - Export the predicted land cover as PNG or GeoTIFF.
+    - Compare baseline predictions with scenario outcomes (if available).
+    """)
+
+    if st.session_state.predicted is None:
+        st.warning("⚠️ No prediction available. Please go back to Step 3 to generate one.")
+    else:
+        st.success("✅ Prediction is ready for visualization.")
         cmap_list = ["#d9f0d3", "#addd8e", "#31a354", "#006d2c"]
         title = "Predicted Land Cover Map"
 
@@ -354,26 +325,38 @@ if st.session_state.step >= 4:
             fig = visualization.plot_prediction(st.session_state.predicted, cmap_list, title)
             st.pyplot(fig)
 
-        if st.button("💾 Save as GeoTIFF"):
-            out_tif = visualization.save_prediction_as_tif(
-                st.session_state.predicted, profiles[-1], "prediction.tif"
-            )
-            st.success(f"Saved as {out_tif}")
-            m = leafmap.Map(center=[48.0, 67.0], zoom=4)
-            m.add_raster(out_tif, layer_name="Predicted Map")
-            m.to_streamlit()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 Save as GeoTIFF"):
+                out_tif = visualization.save_prediction_as_tif(
+                    st.session_state.predicted,
+                    st.session_state.ref_profile,
+                    "prediction.tif"
+                )
+                st.success(f"Saved as `{out_tif}`")
 
-        if st.button("🖼️ Save as PNG"):
-            out_png = visualization.save_prediction_as_png(
-                st.session_state.predicted, cmap_list, "prediction.png"
-            )
-            st.success(f"Saved as {out_png}")
-            st.image(out_png, caption="Prediction PNG Preview")
+        with col2:
+            if st.button("🖼️ Save as PNG"):
+                out_png = visualization.save_prediction_as_png(
+                    st.session_state.predicted,
+                    cmap_list,
+                    "prediction.png"
+                )
+                st.success(f"Saved as `{out_png}`")
+                st.image(out_png, caption="Prediction PNG Preview")
 
         if st.session_state.scenario_stack is not None:
             if st.button("🛰️ Run Prediction on Scenario"):
+                st.info("Running scenario-based prediction...")
                 scenario_pred = prediction.predict_map(
-                    st.session_state.model, st.session_state.scenario_stack, mask=None
+                    model=st.session_state.model,
+                    X_stack=st.session_state.scenario_stack,
+                    mask=None,
+                    ref_profile=st.session_state.ref_profile
                 )
-                fig = visualization.plot_prediction(scenario_pred, cmap_list, f"{title} (Scenario)")
+                fig = visualization.plot_prediction(
+                    scenario_pred,
+                    cmap_list,
+                    f"{title} (Scenario)"
+                )
                 st.pyplot(fig)
