@@ -26,7 +26,11 @@ def _open_as_raster(file_object_or_path):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp:
                 temp_filepath = tmp.name
                 file_object_or_path.seek(0)
-                tmp.write(file_object_or_path.read())
+                while True:
+                    chunk = file_object_or_path.read(16 * 1024)  # Read 16KB at a time
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
 
             # Now, open the raster from the temporary file path.
             with rasterio.open(temp_filepath) as src:
