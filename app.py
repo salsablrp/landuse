@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 
-from landuse_tool import data_loader, utils, training, prediction, scenarios, visualization
+from landuse_tool import data_loader, prediction_ori, utils, training, scenarios, visualization
 
 st.set_page_config(layout="wide")
 st.title("🌍 Land Use Monitoring & Prediction Tool")
@@ -104,13 +104,12 @@ elif st.session_state.active_step == 1:
     if st.session_state.uploaded_targets and not st.session_state.targets_loaded:
         with st.spinner("Processing targets..."):
             try:
-                arrays, masks, profiles = data_loader.load_targets(st.session_state.uploaded_targets, align=True)
-                if arrays and len(arrays) > 0:
-                    st.session_state.targets = (arrays, masks, profiles)
+                profiles, mask = data_loader.load_targets(st.session_state.uploaded_targets, align=True)
+                if profiles:
                     st.session_state.ref_profile = profiles[-1]
+                    st.session_state.mask = mask
                     st.session_state.targets_loaded = True
                     st.success("Successfully processed targets.")
-                    st.info(f"Loaded {len(arrays)} target files.")
                 else:
                     st.session_state.targets_loaded = False
                     st.error("Target processing failed. Check the files for errors.")
@@ -169,26 +168,20 @@ elif st.session_state.active_step == 1:
 # --- Step 2: Training ---
 elif st.session_state.active_step == 2:
     st.header("Step 2: Sample and Train Model")
-
-    st.markdown("""
-    Here you will:
-
-    - Sample training data points from the latest land cover raster.
-    - Train a **Random Forest** model using the sampled data and predictors.
-
-    This model will then be used to predict future land cover changes.
-    """)
+    # ... (markdown text)
 
     if not st.session_state.targets_loaded or not st.session_state.predictors_loaded:
         st.warning("⚠️ No files found. Go back to Step 1 and upload them.")
     else:
         if st.button("📥 Sample Training Data"):
-            with st.spinner("Sampling training data..."):
+            with st.spinner("Sampling training data... This may take a while for large files."):
                 try:
-                    # Pass the in-memory arrays directly to the sampling function
-                    X, y = data_loader.sample_training_data(
-                        targets=st.session_state.targets,
-                        predictors=st.session_state.predictors
+                    # IMPORTANT CHANGE HERE:
+                    # We no longer use the pre-loaded arrays. We pass the file objects.
+                    X, y = data_loader.sample_training_data_optimized(
+                        target_files=st.session_state.uploaded_targets,
+                        predictor_files=st.session_state.uploaded_predictors,
+                        ref_profile=st.session_state.ref_profile
                     )
                     if X is not None and y is not None:
                         st.session_state.X = X
@@ -236,7 +229,7 @@ elif st.session_state.active_step == 3:
                 ref_profile = st.session_state.ref_profile
                 predictors = st.session_state.scenario_stack or st.session_state.predictors
 
-                predicted = prediction.predict_map(
+                predicted = prediction_ori.predict_map(
                     model=st.session_state.model,
                     X_stack=predictors,
                     mask=mask,
@@ -376,7 +369,7 @@ elif st.session_state.active_step == 5:
         if st.session_state.scenario_stack is not None:
             if st.button("🛰️ Run Prediction on Scenario"):
                 st.info("Running scenario-based prediction...")
-                scenario_pred = prediction.predict_map(
+                scenario_pred = prediction_ori.predict_map(
                     model=st.session_state.model,
                     X_stack=st.session_state.scenario_stack,
                     mask=None,

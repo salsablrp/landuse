@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import leafmap
 
-from landuse_tool import data_loader, utils, training, prediction, scenarios, visualization
+from landuse_tool import data_loader, prediction_ori, utils, training, scenarios, visualization
 
 st.set_page_config(layout="wide")
 st.title("🌍 Land Use Monitoring & Prediction Tool")
@@ -207,7 +207,7 @@ elif st.session_state.active_step == 3:
                 ref_profile = profiles[-1]
                 predictors = st.session_state.scenario_stack or st.session_state.predictors
 
-                predicted = prediction.predict_map(
+                predicted = prediction_ori.predict_map(
                     model=st.session_state.model,
                     X_stack=predictors,
                     mask=mask,
@@ -348,7 +348,7 @@ elif st.session_state.active_step == 5:
         if st.session_state.scenario_stack is not None:
             if st.button("🛰️ Run Prediction on Scenario"):
                 st.info("Running scenario-based prediction...")
-                scenario_pred = prediction.predict_map(
+                scenario_pred = prediction_ori.predict_map(
                     model=st.session_state.model,
                     X_stack=st.session_state.scenario_stack,
                     mask=None,
