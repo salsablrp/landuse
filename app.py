@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import rasterio
 
 from landuse_tool import data_loader, prediction, utils, training, scenarios, visualization
 
