@@ -130,23 +130,24 @@ elif st.session_state.active_step == 1:
         st.session_state.predictors_loaded = False
 
     if st.session_state.uploaded_predictors and st.session_state.ref_profile and not st.session_state.predictors_loaded:
-        with st.spinner("Processing predictors..."):
-            try:
-                predictors = data_loader.load_predictors(
-                    st.session_state.uploaded_predictors,
-                    st.session_state.ref_profile
-                )
-                if predictors is not None:
-                    st.session_state.predictors = predictors
-                    st.session_state.predictors_loaded = True
-                    st.success(f"Loaded predictors stack with shape {predictors.shape}")
-                else:
+            with st.spinner("Processing predictors..."):
+                try:
+                    # The function now returns True or False
+                    is_valid = data_loader.load_predictors(
+                        st.session_state.uploaded_predictors,
+                        st.session_state.ref_profile
+                    )
+                    if is_valid:
+                        # We no longer store the giant array, just mark as loaded/validated
+                        st.session_state.predictors_loaded = True
+                        st.success(f"Validated {len(st.session_state.uploaded_predictors)} predictor files successfully.")
+                    else:
+                        st.session_state.predictors_loaded = False
+                        st.error("Predictor validation failed. Check the files for errors.")
+                except Exception as e:
                     st.session_state.predictors_loaded = False
-                    st.error("Predictor processing failed. Check the files for errors.")
-            except Exception as e:
-                st.session_state.predictors_loaded = False
-                st.error(f"An unexpected error occurred during predictor processing: {e}")
-
+                    st.error(f"An unexpected error occurred during predictor processing: {e}")
+                    
     if st.session_state.targets_loaded and st.session_state.predictors_loaded:
         col1, col2 = st.columns(2)
         with col1:
