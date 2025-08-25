@@ -1,16 +1,30 @@
 import streamlit as st
 import os
+import tempfile
 
 from landuse_tool import data_loader, utils, training, prediction, scenarios, visualization
 
 st.set_page_config(layout="wide")
 st.title("🌍 Land Use Monitoring & Prediction Tool")
 
+# --- Helper function to save uploaded files to a temporary location ---
+def save_uploaded_file(uploaded_file):
+    """Saves an uploaded file to a temporary location and returns the path."""
+    try:
+        # Use tempfile to create a temporary directory and save the file
+        temp_dir = tempfile.mkdtemp()
+        path = os.path.join(temp_dir, uploaded_file.name)
+        with open(path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        return path
+    except Exception as e:
+        st.error(f"Error saving file: {e}")
+        return None
+
 # --- Initialize Session State ---
 if "step" not in st.session_state:
     st.session_state.step = 0
 
-# Store all necessary session states
 defaults = {
     "targets": None,
     "predictors": None,
@@ -24,8 +38,8 @@ defaults = {
     "geotiff_saved": None,
     "png_saved": None,
     "scenario_changes": [],
-    "uploaded_targets": [],
-    "uploaded_predictors": [],
+    "target_paths": [],  # Storing the temporary file paths
+    "predictor_paths": [], # Storing the temporary file paths
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -48,13 +62,11 @@ steps = [
     "5️⃣ Visualization"
 ]
 
-# Buttons for each step
 st.sidebar.markdown("### 📋 Navigation")
 for i, label in enumerate(steps):
     if st.sidebar.button(label):
         st.session_state.active_step = i
 
-# Set active step
 if "active_step" not in st.session_state:
     st.session_state.active_step = 0
 
@@ -96,8 +108,9 @@ elif st.session_state.active_step == 1:
     )
 
     if uploaded_targets:
-        st.session_state.uploaded_targets = uploaded_targets
-        arrays, masks, profiles = data_loader.load_targets(uploaded_targets, align=True)
+        target_paths = [save_uploaded_file(f) for f in uploaded_targets]
+        st.session_state.target_paths = target_paths
+        arrays, masks, profiles = data_loader.load_targets(target_paths, align=True)
         st.session_state.targets = (arrays, masks, profiles)
         st.session_state.profiles = profiles
         st.success(f"Loaded {len(arrays)} target rasters.")
@@ -111,13 +124,14 @@ elif st.session_state.active_step == 1:
     )
 
     if uploaded_predictors and st.session_state.targets:
-        st.session_state.uploaded_predictors = uploaded_predictors
+        predictor_paths = [save_uploaded_file(f) for f in uploaded_predictors]
+        st.session_state.predictor_paths = predictor_paths
         ref_profile = st.session_state.profiles[0]
-        predictors = data_loader.load_predictors(uploaded_predictors, ref_profile)
+        predictors = data_loader.load_predictors(predictor_paths, ref_profile)
         st.session_state.predictors = predictors
         st.success(f"Loaded predictors stack with shape {predictors.shape}")
 
-    if st.session_state.uploaded_targets and st.session_state.uploaded_predictors:
+    if st.session_state.target_paths and st.session_state.predictor_paths:
         col1, col2 = st.columns(2)
         with col1:
             if st.button("➡️ Proceed to Training"):
@@ -130,10 +144,6 @@ elif st.session_state.active_step == 1:
     if st.session_state.get("show_maps"):
         st.subheader("🗺️ Map Preview")
         m = leafmap.Map(center=[0, 0], zoom=2)
-
-        # Optional: add example visualization (you may need to customize)
-        # m.add_raster("your_raster_path.tif", layer_name="Layer")
-
         m.to_streamlit(height=500)
 
 # --- Step 2: Training ---
@@ -149,19 +159,19 @@ elif st.session_state.active_step == 2:
     This model will then be used to predict future land cover changes.
     """)
 
-    uploaded_predictors = st.session_state.get("uploaded_predictors", [])
-    uploaded_targets = st.session_state.get("uploaded_targets", [])
-    if not uploaded_predictors and not uploaded_targets:
+    predictor_paths = st.session_state.get("predictor_paths", [])
+    target_paths = st.session_state.get("target_paths", [])
+    
+    if not predictor_paths or not target_paths:
         st.warning("⚠️ No files found. Go back to Step 1 and upload them.")
     else:
         if st.button("📥 Sample Training Data"):
             with st.spinner("Sampling training data..."):
                 try:
-                    # Pass the file-like objects directly
-                    latest_target = uploaded_targets[-1]
+                    latest_target = target_paths[-1]
                     X, y = data_loader.sample_training_data(
                         latest_target,
-                        uploaded_predictors,
+                        predictor_paths,
                         total_samples=5000,
                         window_size=512
                     )
@@ -249,11 +259,11 @@ elif st.session_state.active_step == 4:
     The modified predictor stack can be used for scenario-based predictions in Step 3.
     """)
 
-    uploaded_predictors = st.session_state.get("uploaded_predictors", [])
-    if not uploaded_predictors:
+    predictor_paths = st.session_state.get("predictor_paths", [])
+    if not predictor_paths:
         st.warning("⚠️ No predictor files found. Go back to Step 1 and upload them.")
     else:
-        predictor_filenames = [f.name for f in uploaded_predictors]
+        predictor_filenames = [os.path.basename(f) for f in predictor_paths]
 
         scenario_name = st.text_input("Scenario name", "My Scenario")
 
@@ -289,7 +299,7 @@ elif st.session_state.active_step == 4:
         if st.button("🌱 Apply Scenario"):
             scenario_stack = scenarios.apply_scenario(
                 stack=st.session_state.predictors,
-                predictor_files=uploaded_predictors,
+                predictor_paths=predictor_paths,
                 scenario_def={
                     "name": scenario_name,
                     "changes": st.session_state.scenario_changes
