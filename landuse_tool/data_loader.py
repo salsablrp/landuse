@@ -111,9 +111,11 @@ def sample_training_data(target_file, predictor_files, total_samples=10000, wind
     y_samples = []
 
     src_target = None
+    # No longer keeping a list of open predictor sources
     predictor_srcs = []
 
     try:
+        # Open the target file once
         src_target = rasterio.open(target_file)
         lc_full = src_target.read(1)
         src_profile = src_target.profile
@@ -121,10 +123,7 @@ def sample_training_data(target_file, predictor_files, total_samples=10000, wind
         nodata = src_profile.get("nodata")
         mask_full = (lc_full != 255) & (lc_full != 254) & (lc_full != nodata)
 
-        # We need to open the predictor rasters only once
-        for f in predictor_files:
-            predictor_srcs.append(rasterio.open(f))
-
+        # Loop through windows for sampling
         for i in tqdm(range(0, height, window_size), desc="Sampling rows"):
             for j in range(0, width, window_size):
                 if len(X_samples) >= total_samples:
@@ -151,8 +150,11 @@ def sample_training_data(target_file, predictor_files, total_samples=10000, wind
 
                     pixel_values = []
                     valid_pixel = True
-                    for src_pred in predictor_srcs:
+                    # Open and close each predictor file for each pixel
+                    for f in predictor_files:
+                        src_pred = None
                         try:
+                            src_pred = rasterio.open(f)
                             val = src_pred.read(1, window=Window(j + c_win, i + r_win, 1, 1))[0, 0]
                             if np.isnan(val):
                                 valid_pixel = False
@@ -160,8 +162,12 @@ def sample_training_data(target_file, predictor_files, total_samples=10000, wind
                             pixel_values.append(val)
                         except Exception as e:
                             valid_pixel = False
+                            st.error(f"Error reading pixel from file '{getattr(f, 'name', 'unknown')}': {e}")
                             break
-
+                        finally:
+                            if src_pred:
+                                src_pred.close()
+                    
                     if valid_pixel:
                         X_samples.append(pixel_values)
                         y_samples.append(lc_window[r_win, c_win])
@@ -178,7 +184,7 @@ def sample_training_data(target_file, predictor_files, total_samples=10000, wind
         st.error(f"Error during training data sampling: {e}")
         return None, None
     finally:
-        # Close all opened predictor files
+        # Close the target file
         if src_target:
             src_target.close()
         for src_pred in predictor_srcs:
