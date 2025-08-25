@@ -212,7 +212,7 @@ elif st.session_state.active_step == "Scenario":
     - Modifying predictor layers (e.g., increase population, deforestation).
     - Applying arithmetic operations to specific rasters.
 
-    The modified predictor stack can be used for scenario-based predictions in Step 3.
+    The modified predictor stack can be used for scenario-based predictions in the next step.
     """)
     if not st.session_state.predictors_loaded:
         st.warning("⚠️ Please upload predictors in Step 1 first.")
@@ -252,7 +252,7 @@ elif st.session_state.active_step == "Prediction":
     - Predict land cover for a future or unseen time period.
     - Visualize and export the results in raster formats (GeoTIFF, PNG).
 
-    Optionally, run predictions using modified scenarios from Step 4.
+    Optionally, run predictions using modified scenarios from the previous step.
     """)
     if not st.session_state.train_success:
         st.warning("⚠️ Please train a model in Step 2 first.")
