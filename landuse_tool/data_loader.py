@@ -1,4 +1,6 @@
 from io import BytesIO
+from contextlib import contextmanager
+
 import rasterio
 from rasterio.windows import Window
 from rasterio.io import MemoryFile
@@ -9,19 +11,22 @@ import streamlit as st # Import streamlit for error messages
 
 from .utils import reproject_raster, align_rasters, create_mask
 
+@contextmanager
 def _open_as_raster(file_object_or_path):
     """
-    Open a raster from either an uploaded file-like object or a local path.
-    Returns a rasterio dataset object, NOT an array.
+    A context manager to safely open a raster from an uploaded file or a path.
+    This ensures the underlying MemoryFile is not garbage-collected prematurely.
     """
     if hasattr(file_object_or_path, "read"):
-        # For UploadedFile, use MemoryFile to open it without writing to disk
-        # This avoids the extra copy to BytesIO
-        file_object_or_path.seek(0) # Ensure we are at the start of the file
-        return MemoryFile(file_object_or_path.read()).open()
+        # Handle in-memory file (Streamlit UploadedFile)
+        file_object_or_path.seek(0)
+        with MemoryFile(file_object_or_path.read()) as memfile:
+            with memfile.open() as src:
+                yield src
     else:
-        # For a local file path
-        return rasterio.open(str(file_object_or_path))
+        # Handle local file path
+        with rasterio.open(str(file_object_or_path)) as src:
+            yield src
 
 def load_raster(file_object_or_path):
     """
