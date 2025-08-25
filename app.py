@@ -115,7 +115,6 @@ elif st.session_state.active_step == 1:
                     st.success("Successfully processed targets.")
                 else:
                     st.session_state.targets_loaded = False
-                    st.error("Target processing failed. Check the files for errors.")
             except Exception as e:
                 st.session_state.targets_loaded = False
                 st.error(f"An unexpected error occurred during target processing: {e}")

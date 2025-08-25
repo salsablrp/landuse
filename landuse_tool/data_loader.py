@@ -16,16 +16,18 @@ from .utils import reproject_raster, align_rasters, create_mask
 def _open_as_raster(file_object_or_path):
     """
     A context manager to safely open a raster from an uploaded file or a path.
-    This ensures the underlying MemoryFile is not garbage-collected prematurely.
+    This version correctly handles in-memory files for rasterio.
     """
     if hasattr(file_object_or_path, "read"):
-        # Handle in-memory file (Streamlit UploadedFile)
+        # For an uploaded file, we must read its content into bytes for MemoryFile.
         file_object_or_path.seek(0)
-        with MemoryFile(file_object_or_path.read()) as memfile:
+        file_bytes = file_object_or_path.read()
+        
+        with MemoryFile(file_bytes) as memfile:
             with memfile.open() as src:
                 yield src
     else:
-        # Handle local file path
+        # For a local file path, open it directly.
         with rasterio.open(str(file_object_or_path)) as src:
             yield src
 
@@ -41,31 +43,32 @@ def load_raster(file_object_or_path):
 
 def load_targets(target_files, align=True):
     """
-    MODIFIED: This function is now memory-efficient. It only reads the
-    full array of the LAST target file to get the reference profile and mask.
+    MODIFIED: This version is robust and memory-efficient for multiple files.
+    It reads the profile from all files but only reads the full pixel data
+    from the LAST file to generate the mask.
     """
-    if not target_files:
-        st.warning("No target files were provided.")
+    if not target_files or len(target_files) < 2:
+        # This message is now handled in the function itself for clarity.
+        st.warning("Please upload at least two target files.")
         return None, None
-    
-    # We assume the last uploaded file is the reference for the grid and mask.
-    last_target_file = target_files[-1]
 
     try:
-        # Perform a full read ONLY on the last file.
-        with _open_as_raster(last_target_file) as src:
+        # Lightweight check: Open each file to get its profile. This uses more
+        # memory than just checking the header, but is necessary with MemoryFile.
+        # We rely on Streamlit's resource limits to manage this.
+        profiles = []
+        for f in target_files:
+            with _open_as_raster(f) as src:
+                profiles.append(src.profile)
+        
+        # Now, do a final read ONLY on the last file to get the mask.
+        # The bytes for this file are read again, which is inefficient but safe.
+        with _open_as_raster(target_files[-1]) as src:
             ref_profile = src.profile
             arr = src.read(1)
             nodata = src.nodata
             mask = create_mask(arr, nodata=nodata)
 
-        # For all other target files, just do a quick validation to ensure they can be opened.
-        # This uses very little memory as it doesn't read the pixel data.
-        for f in target_files[:-1]:
-            with _open_as_raster(f):
-                pass # The 'with' block just confirms the file is a valid raster.
-        
-        # The function now returns a single profile, not a list.
         return ref_profile, mask
 
     except Exception as e:
