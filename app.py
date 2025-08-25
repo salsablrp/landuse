@@ -102,12 +102,31 @@ for msg in st.session_state.log:
 
 # --- Page: Home ---
 if st.session_state.active_step == "Home":
-    st.header("👋 Welcome!")
-    st.markdown("Use the sidebar to navigate through the workflow.")
+    st.header("👋 Welcome to the Land Use Monitoring & Prediction Tool")
+    st.markdown("""
+    This tool helps you analyze and forecast land cover change using remote sensing data.
+    
+    **Workflow Overview:**
+    1. Upload historical land cover and predictor rasters.
+    2. Train a model on these datasets.
+    3. Predict future land cover based on current conditions.
+    4. Simulate different scenarios by modifying predictors.
+    5. Visualize and export the results.
+
+    👈 Use the sidebar to begin with **Step 1**.
+    """)
 
 # --- Page: Upload Data ---
 elif st.session_state.active_step == "Upload Data":
     st.header("Step 1: Upload Data")
+    st.markdown("""
+    In this step, you will upload the required raster datasets:
+
+    - **Land cover targets** from at least two different years.
+    - **Predictor variables**, such as elevation, slope, distance to roads, etc.
+
+    These datasets will be aligned and prepared for training in the next step.
+    """)
 
     st.subheader("1a. Upload Land Cover Targets (≥2 years)")
     uploaded_targets = st.file_uploader("Upload land cover rasters", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
@@ -155,6 +174,14 @@ elif st.session_state.active_step == "Upload Data":
 # --- Page: Training ---
 elif st.session_state.active_step == "Training":
     st.header("Step 2: Sample and Train Model")
+    st.markdown("""
+    Here you will:
+
+    - Sample training data points from the latest land cover raster.
+    - Train a **Random Forest** model using the sampled data and predictors.
+
+    This model will then be used to predict future land cover changes.
+    """)
     if not st.session_state.predictors_loaded:
         st.warning("⚠️ Please complete Step 1 first.")
     else:
@@ -179,6 +206,14 @@ elif st.session_state.active_step == "Training":
 # --- Page: Scenario ---
 elif st.session_state.active_step == "Scenario":
     st.header("Step 3: Define a Scenario (Optional)")
+    st.markdown("""
+    Simulate alternative futures by:
+
+    - Modifying predictor layers (e.g., increase population, deforestation).
+    - Applying arithmetic operations to specific rasters.
+
+    The modified predictor stack can be used for scenario-based predictions in Step 3.
+    """)
     if not st.session_state.predictors_loaded:
         st.warning("⚠️ Please upload predictors in Step 1 first.")
     else:
@@ -211,6 +246,14 @@ elif st.session_state.active_step == "Scenario":
 # --- Page: Prediction ---
 elif st.session_state.active_step == "Prediction":
     st.header("Step 4: Run Prediction")
+    st.markdown("""
+    Use the trained model to:
+
+    - Predict land cover for a future or unseen time period.
+    - Visualize and export the results in raster formats (GeoTIFF, PNG).
+
+    Optionally, run predictions using modified scenarios from Step 4.
+    """)
     if not st.session_state.train_success:
         st.warning("⚠️ Please train a model in Step 2 first.")
     else:
@@ -237,6 +280,13 @@ elif st.session_state.active_step == "Prediction":
 # --- Page: Visualization ---
 elif st.session_state.active_step == "Visualization":
     st.header("Step 5: Visualization")
+    st.markdown("""
+    Here you can:
+
+    - View predictions as inline maps or images.
+    - Export the predicted land cover as PNG or GeoTIFF.
+    - Compare baseline predictions with scenario outcomes (if available).
+    """)
     if not st.session_state.prediction_success:
         st.warning("⚠️ No prediction available. Please generate one in the Prediction step.")
     else:
