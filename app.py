@@ -290,12 +290,10 @@ elif st.session_state.active_step == "Visualization":
     if not st.session_state.prediction_success:
         st.warning("⚠️ No prediction available. Please generate one in the Prediction step.")
     else:
-        st.info(f"Displaying result from the latest prediction.")
-        cmap_list = ["#d9f0d3", "#addd8e", "#31a354", "#006d2c"]
-        title = "Predicted Land Cover Map"
-        if st.button("📊 Show Inline Map"):
-            with st.spinner("Loading map..."):
-                with rasterio.open(st.session_state.predicted_filepath) as src:
-                    predicted_array = src.read(1)
-                fig = visualization.plot_prediction(predicted_array, cmap_list, title)
-                st.pyplot(fig)
+        # --- NEW: Interactive Map Visualization ---
+        m = visualization.create_interactive_map(
+            target_files=st.session_state.uploaded_targets,
+            predictor_files=st.session_state.uploaded_predictors,
+            prediction_filepath=st.session_state.predicted_filepath
+        )
+        m.to_streamlit(height=700)
