@@ -12,3 +12,5 @@ shapely
 seaborn
 xarray
 localtileserver
+folium
+streamlit-folium

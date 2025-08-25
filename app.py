@@ -3,6 +3,7 @@ import os
 import rasterio
 import time
 import pandas as pd
+from streamlit_folium import st_folium
 
 # --- Import your custom modules ---
 from landuse_tool import data_loader, prediction, utils, training, scenarios, visualization
@@ -302,4 +303,4 @@ elif st.session_state.active_step == "Visualization":
             predictor_files=st.session_state.uploaded_predictors,
             prediction_filepath=st.session_state.predicted_filepath # This will be None if prediction hasn't run
         )
-        m.to_streamlit(height=700)
+        st_folium(m, width=None, height=700)
