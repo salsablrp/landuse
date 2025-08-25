@@ -4,8 +4,6 @@ import numpy as np
 import streamlit as st
 import seaborn as sns
 import pandas as pd
-import tempfile
-import os
 import folium
 from io import BytesIO
 import base64
@@ -38,46 +36,52 @@ def plot_confusion_matrix(cm, class_names):
 
 def create_interactive_map(target_files, predictor_files, prediction_filepath):
     """
-    Creates an interactive folium map with toggleable layers for all relevant files.
-    This version avoids localtileserver by converting rasters to in-memory PNGs
-    and adding them as image overlays.
+    Creates an interactive folium map with toggleable layers.
+    This version is memory-safe and avoids crashes by downscaling large rasters
+    before displaying them as overlays.
     """
     st.info("Generating interactive map... This may take a moment.")
     
-    # Initialize a folium map
     m = folium.Map(location=[0, 0], zoom_start=2, tiles="CartoDB positron")
 
-    # Helper function to convert a raster to a temporary PNG and add it to the map
     def add_raster_as_overlay(file_or_path, layer_name, palette=None):
         try:
             with _open_as_raster(file_or_path) as src:
-                # Get the geographic boundaries of the raster
                 bounds = ((src.bounds.bottom, src.bounds.left), (src.bounds.top, src.bounds.right))
-                data = src.read(1)
                 
-                # Create an in-memory buffer to save the PNG
-                buffer = BytesIO()
+                # --- FIX IS HERE: DOWNSCALING LOGIC ---
+                # Define a maximum dimension for the visualization thumbnail
+                MAX_DIM = 512
                 
-                # Use matplotlib to save the raster data as an image to the buffer
-                cmap = 'viridis' # Default colormap for predictors
-                if palette:
-                    cmap = ListedColormap(palette)
-                
-                # Normalize data for better color mapping if it's not thematic
-                if not palette:
-                    vmin = np.nanmin(data)
-                    vmax = np.nanmax(data)
+                # Calculate the new shape, preserving aspect ratio
+                if src.height > MAX_DIM or src.width > MAX_DIM:
+                    if src.height > src.width:
+                        new_height = MAX_DIM
+                        new_width = int(src.width * (MAX_DIM / src.height))
+                    else:
+                        new_width = MAX_DIM
+                        new_height = int(src.height * (MAX_DIM / src.width))
+                    
+                    out_shape = (new_height, new_width)
                 else:
-                    vmin, vmax = None, None
+                    out_shape = (src.height, src.width)
+
+                # Read the data, downscaling it on the fly to the new shape
+                data = src.read(1, out_shape=out_shape)
+                # --- END OF FIX ---
+
+                buffer = BytesIO()
+                cmap = 'viridis' if not palette else ListedColormap(palette)
+                
+                # Normalize for better color mapping if it's a predictor
+                vmin, vmax = (np.nanmin(data), np.nanmax(data)) if not palette else (None, None)
 
                 plt.imsave(buffer, data, cmap=cmap, format='png', vmin=vmin, vmax=vmax)
                 buffer.seek(0)
                 
-                # Encode the image in base64 to embed it in the map
                 encoded_image = base64.b64encode(buffer.read()).decode('utf-8')
                 image_url = f'data:image/png;base64,{encoded_image}'
                 
-                # Add the generated PNG image to the map as an overlay
                 img_overlay = folium.raster_layers.ImageOverlay(
                     image=image_url,
                     bounds=bounds,
@@ -105,7 +109,6 @@ def create_interactive_map(target_files, predictor_files, prediction_filepath):
         for file in predictor_files:
             add_raster_as_overlay(file, f"Predictor: {file.name}")
     
-    # Add a layer control to toggle layers on and off
     folium.LayerControl().add_to(m)
             
     return m
