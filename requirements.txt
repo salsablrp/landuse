@@ -11,3 +11,4 @@ ipywidgets
 shapely
 seaborn
 xarray
+localtileserver
