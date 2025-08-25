@@ -5,122 +5,80 @@ import numpy as np
 from collections import Counter
 from tqdm import tqdm
 
-# Assuming these utility functions exist in your project
-# from .utils import reproject_raster, align_rasters, create_mask, resample_raster
-
-# --- Mock utility functions for standalone running ---
-# In your actual project, you would use your own utility functions.
-def align_rasters(raster_list):
-    # This is a placeholder. Your actual alignment logic would be here.
-    print("Aligning rasters (mock function)...")
-    return raster_list
-
-def create_mask(arr, nodata):
-    # This is a placeholder.
-    if nodata is not None:
-        return arr != nodata
-    return np.ones_like(arr, dtype=bool)
-
-def resample_raster(arr, prof, ref_profile):
-    # This is a placeholder. Your actual resampling logic would be here.
-    print("Resampling raster (mock function)...")
-    return arr
-# --- End of Mock functions ---
-
+from .utils import reproject_raster, align_rasters, create_mask
 
 def _open_as_raster(path_or_file):
     """
-    Opens a raster from an uploaded file-like object (from st.file_uploader)
-    or a local file path in a memory-efficient way.
-
-    Returns:
-        tuple: (numpy.ndarray, dict) containing the raster array and its profile.
+    Open a raster either from:
+      - an uploaded file-like object (Streamlit uploader)
+      - a local file path
+    Returns (array, profile).
     """
-    # Check if it's a file-like object from Streamlit's uploader
-    if hasattr(path_or_file, "read"):
-        # --- THIS IS THE KEY FIX ---
-        # We pass the file-like object (path_or_file) directly to MemoryFile.
-        # We DO NOT use .read(), which would create a second copy in memory.
-        with MemoryFile(path_or_file) as memfile:
-            with memfile.open() as dataset:
-                arr = dataset.read(1)
-                profile = dataset.profile
+    if hasattr(path_or_file, "read"):  
+        # Case 1: file-like object (Streamlit upload)
+        file_bytes = path_or_file.read()
+        with MemoryFile(file_bytes) as memfile:
+            with memfile.open() as src:
+                arr = src.read(1)
+                profile = src.profile
     else:
-        # Fallback for local file paths (strings)
-        with rasterio.open(str(path_or_file)) as dataset:
-            arr = dataset.read(1)
-            profile = dataset.profile
+        # Case 2: local file path (string/Path)
+        with rasterio.open(str(path_or_file)) as src:
+            arr = src.read(1)
+            profile = src.profile
 
     return arr, profile
 
 
 def load_raster(path_or_file):
     """
-    Loads a single raster and returns its array and profile.
+    Load a single raster and return (array, profile).
     """
     return _open_as_raster(path_or_file)
 
 
 def load_targets(target_files, align=True):
     """
-    Loads and processes multi-temporal land cover target rasters.
-
+    Load multi-temporal land cover rasters.
     Args:
-        target_files (list): A list of uploaded file objects from Streamlit.
-        align (bool): Whether to align the rasters to a common grid.
-
+        target_files (list[file-like or str]): Uploaded files or file paths.
     Returns:
-        tuple: (arrays, masks, profiles)
+        arrays, masks, profiles
     """
-    # Process each uploaded file using the memory-efficient loader
     raster_list = [load_raster(f) for f in target_files]
 
-    # Optional alignment (ensure your align_rasters function is robust)
+    # Optional alignment
     if align and len(raster_list) > 1:
-        raster_list = align_rasters(raster_list)
+        raster_list = align_rasters(raster_list)  # assumes you have this util
 
     arrays, profiles = zip(*raster_list)
     masks = [create_mask(arr, nodata=prof.get("nodata")) for arr, prof in raster_list]
 
-    return list(arrays), list(masks), list(profiles)
+    return arrays, masks, profiles
 
 
 def load_predictors(predictor_files, ref_profile=None, align=True):
     """
-    Loads predictor rasters, optionally aligning them to a reference profile.
-
-    Args:
-        predictor_files (list): A list of uploaded file objects.
-        ref_profile (dict): The rasterio profile to align to.
-        align (bool): Whether to perform alignment.
-
-    Returns:
-        numpy.ndarray: A stacked NumPy array of predictor variables.
+    Load predictor rasters, align them to a reference (if provided).
+    Returns stacked predictors [bands, height, width].
     """
     raster_list = [load_raster(f) for f in predictor_files]
 
     if ref_profile and align:
-        aligned_rasters = []
+        aligned = []
+        from .utils import resample_raster
         for arr, prof in raster_list:
-            # Assumes you have a resample_raster utility function
             aligned_arr = resample_raster(arr, prof, ref_profile)
-            aligned_rasters.append(aligned_arr)
-        arrays = aligned_rasters
-    else:
-        arrays, _ = zip(*raster_list)
+            aligned.append((aligned_arr, ref_profile))
+        raster_list = aligned
 
-    # Stack the arrays into a single multi-band NumPy array
+    arrays, _ = zip(*raster_list)
     stack = np.stack(arrays, axis=0)
+
     return stack
 
 
 def sample_training_data(target_path, predictor_paths, total_samples=10000, window_size=512):
-    """
-    Samples training data from target and predictor rasters.
-    NOTE: This function still reads from file paths. For a fully in-memory
-    workflow with uploaded files, this would need to be adapted to accept
-    NumPy arrays instead of paths.
-    """
     X_samples = []
     y_samples = []
 
@@ -151,7 +109,9 @@ def sample_training_data(target_path, predictor_paths, total_samples=10000, wind
                 sample_indices = np.random.choice(n_valid, size=n_samples, replace=False)
 
                 for idx in sample_indices:
-                    r_win, c_win = valid_rows[idx], valid_cols[idx]
+                    r_win = valid_rows[idx]
+                    c_win = valid_cols[idx]
+
                     pixel_values = []
                     valid_pixel = True
 
@@ -163,7 +123,7 @@ def sample_training_data(target_path, predictor_paths, total_samples=10000, wind
                                     valid_pixel = False
                                     break
                                 pixel_values.append(val)
-                            except Exception:
+                            except:
                                 valid_pixel = False
                                 break
 
@@ -179,3 +139,24 @@ def sample_training_data(target_path, predictor_paths, total_samples=10000, wind
     y = [y for y in y_samples if y in valid_classes]
 
     return np.array(X), np.array(y)
+
+
+# import rasterio
+# import numpy as np
+# from .config import TARGET_RASTER, PREDICTOR_PATHS
+
+# def load_target():
+#     with rasterio.open(TARGET_RASTER) as src:
+#         lc = src.read(1)
+#         profile = src.profile
+#         mask = (lc != 254) & (lc != 255) & (lc != src.nodata)
+#     return lc, mask, profile
+
+# def load_predictors(mask):
+#     stack = []
+#     for path in PREDICTOR_PATHS:
+#         with rasterio.open(path) as src:
+#             band = src.read(1)
+#             band = np.where(mask, band, np.nan)
+#             stack.append(band)
+#     return np.stack(stack, axis=0)
