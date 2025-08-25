@@ -17,7 +17,6 @@ st.set_page_config(
 st.title("🌍 Land Use Monitoring & Prediction Tool")
 
 # --- Initialize Session State ---
-# Use a function for cleaner initialization
 def initialize_session_state():
     defaults = {
         "active_step": "Home",
@@ -45,11 +44,13 @@ initialize_session_state()
 # --- Helper Functions ---
 def reset_workflow():
     """Clears the session state to start over."""
-    for key in st.session_state.keys():
-        del st.session_state[key]
+    keys_to_keep = ['active_step']
+    for key in list(st.session_state.keys()):
+        if key not in keys_to_keep:
+            del st.session_state[key]
     initialize_session_state()
     st.success("Workflow has been reset.")
-    time.sleep(1) # Give user time to see the message
+    time.sleep(1)
     st.rerun()
 
 def get_file_size_mb(file_list):
@@ -68,17 +69,15 @@ def remove_file(file_list_key, file_to_remove):
     st.session_state.sample_success = False
     st.session_state.train_success = False
     st.session_state.prediction_success = False
+    st.session_state.log = [] # Clear logs as well
     st.rerun()
 
 # --- Sidebar ---
 with st.sidebar:
     st.header("Navigation")
     
-    # 3. Highlighted Sidebar Navigation
     steps = ["Home", "Upload Data", "Training", "Prediction", "Visualization"]
-    icons = ["house", "upload", "bar-chart-steps", "map", "image"]
     
-    # Using a radio button for selection naturally highlights the active choice
     st.session_state.active_step = st.radio(
         "Steps", 
         steps, 
@@ -88,10 +87,8 @@ with st.sidebar:
     
     st.divider()
     
-    # 4. Storage Meter
     st.header("Session Storage")
     total_mb = get_file_size_mb(st.session_state.uploaded_targets) + get_file_size_mb(st.session_state.uploaded_predictors)
-    # Assuming Streamlit Cloud's 1GB RAM limit as a reference
     STORAGE_LIMIT_MB = 1000 
     st.progress(min(total_mb / STORAGE_LIMIT_MB, 1.0))
     st.caption(f"{total_mb:.2f} MB / {STORAGE_LIMIT_MB} MB")
@@ -101,8 +98,6 @@ with st.sidebar:
 
 # --- Main Page Content ---
 
-# 1. Persistent Success Messages
-# Display all logged success messages at the top of the page
 for msg in st.session_state.log:
     st.success(msg)
 
@@ -133,17 +128,16 @@ elif st.session_state.active_step == "Upload Data":
         key="targets_uploader"
     )
 
-    if uploaded_targets:
+    if uploaded_targets and not st.session_state.targets_loaded:
         st.session_state.uploaded_targets = uploaded_targets
         with st.spinner("Processing targets..."):
             ref_profile, mask = data_loader.load_targets(st.session_state.uploaded_targets)
             if ref_profile and mask is not None:
                 st.session_state.ref_profile = ref_profile
                 st.session_state.mask = mask
-                if not st.session_state.targets_loaded:
+                st.session_state.targets_loaded = True
+                if "✅ Targets processed successfully." not in st.session_state.log:
                     st.session_state.log.append("✅ Targets processed successfully.")
-                    st.session_state.targets_loaded = True
-                    st.rerun()
 
     st.subheader("1b. Upload Predictor Rasters")
     uploaded_predictors = st.file_uploader(
@@ -153,21 +147,21 @@ elif st.session_state.active_step == "Upload Data":
         key="predictors_uploader"
     )
 
-    if uploaded_predictors:
+    if uploaded_predictors and not st.session_state.predictors_loaded:
         st.session_state.uploaded_predictors = uploaded_predictors
         if st.session_state.targets_loaded:
             with st.spinner("Validating predictors..."):
                 is_valid = data_loader.load_predictors(st.session_state.uploaded_predictors, st.session_state.ref_profile)
-                if is_valid and not st.session_state.predictors_loaded:
-                    st.session_state.log.append(f"✅ {len(st.session_state.uploaded_predictors)} predictors validated.")
+                if is_valid:
                     st.session_state.predictors_loaded = True
-                    st.rerun()
+                    log_msg = f"✅ {len(st.session_state.uploaded_predictors)} predictors validated."
+                    if log_msg not in st.session_state.log:
+                         st.session_state.log.append(log_msg)
         else:
             st.warning("Please upload and process target files before predictors.")
 
     st.divider()
 
-    # 5. Layer Management System
     col1, col2 = st.columns(2)
     with col1:
         with st.expander("Uploaded Target Layers", expanded=True):
@@ -196,7 +190,6 @@ elif st.session_state.active_step == "Training":
         st.warning("⚠️ Please upload and process both target and predictor files in Step 1.")
     else:
         if st.button("📥 Sample Training Data", disabled=st.session_state.sample_success):
-            # 2. Percentage Progress Bar
             progress_bar = st.progress(0, text="Starting sampling...")
             
             def progress_callback(fraction, text):
@@ -206,13 +199,13 @@ elif st.session_state.active_step == "Training":
                 target_files=st.session_state.uploaded_targets,
                 predictor_files=st.session_state.uploaded_predictors,
                 ref_profile=st.session_state.ref_profile,
-                progress_callback=progress_callback # Pass the callback
+                progress_callback=progress_callback
             )
             if X is not None and y is not None:
                 st.session_state.X, st.session_state.y = X, y
                 st.session_state.log.append(f"✅ Sampled {len(X)} training points.")
                 st.session_state.sample_success = True
-                progress_bar.empty() # Remove the progress bar on completion
+                progress_bar.empty()
                 st.rerun()
 
         if st.session_state.sample_success:
@@ -241,7 +234,7 @@ elif st.session_state.active_step == "Prediction":
                 predictor_files=st.session_state.uploaded_predictors,
                 mask=st.session_state.mask,
                 ref_profile=st.session_state.ref_profile,
-                progress_callback=progress_callback # Pass the callback
+                progress_callback=progress_callback
             )
             st.session_state.predicted_filepath = predicted_filepath
             st.session_state.log.append("✅ Prediction complete.")
@@ -249,13 +242,13 @@ elif st.session_state.active_step == "Prediction":
             progress_bar.empty()
             st.rerun()
 
-# --- Page 5: Visualization ---
+# --- Page 4: Visualization ---
 elif st.session_state.active_step == "Visualization":
-    st.header("Step 5: Visualization")
+    st.header("Step 4: Visualization")
     if not st.session_state.prediction_success:
         st.warning("⚠️ No prediction available. Please generate one in Step 3.")
     else:
-        st.info(f"Displaying result from: `{st.session_state.predicted_filepath}`")
+        st.info(f"Displaying result from temporary file.")
         cmap_list = ["#d9f0d3", "#addd8e", "#31a354", "#006d2c"]
         title = "Predicted Land Cover Map"
 
