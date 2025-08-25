@@ -24,7 +24,17 @@ def load_targets(target_paths, align=True):
     Returns:
         arrays, masks, profiles
     """
-    raster_list = [load_raster(path) for path in target_paths]
+    raster_list = []
+    for path in target_paths:
+        src = None
+        try:
+            src = rasterio.open(path)
+            arr = src.read(1)
+            profile = src.profile
+            raster_list.append((arr, profile))
+        finally:
+            if src:
+                src.close()
 
     if align and len(raster_list) > 1:
         raster_list = align_rasters(raster_list)
@@ -40,7 +50,17 @@ def load_predictors(predictor_paths, ref_profile=None, align=True):
     Load predictor rasters from a list of paths, align them to a reference.
     Returns stacked predictors [bands, height, width].
     """
-    raster_list = [load_raster(path) for path in predictor_paths]
+    raster_list = []
+    for path in predictor_paths:
+        src = None
+        try:
+            src = rasterio.open(path)
+            arr = src.read(1)
+            profile = src.profile
+            raster_list.append((arr, profile))
+        finally:
+            if src:
+                src.close()
 
     if ref_profile and align:
         aligned = []
@@ -60,17 +80,21 @@ def sample_training_data(target_path, predictor_paths, total_samples=10000, wind
     X_samples = []
     y_samples = []
 
-    with rasterio.open(target_path) as src_target:
+    src_target = None
+    predictor_srcs = []
+
+    try:
+        src_target = rasterio.open(target_path)
         lc_full = src_target.read(1)
         src_profile = src_target.profile
         width, height = src_profile["width"], src_profile["height"]
         nodata = src_profile.get("nodata")
         mask_full = (lc_full != 255) & (lc_full != 254) & (lc_full != nodata)
-    
-    # We need to open the predictor rasters only once
-    predictor_srcs = [rasterio.open(path) for path in predictor_paths]
 
-    try:
+        # We need to open the predictor rasters only once
+        for path in predictor_paths:
+            predictor_srcs.append(rasterio.open(path))
+
         for i in tqdm(range(0, height, window_size), desc="Sampling rows"):
             for j in range(0, width, window_size):
                 if len(X_samples) >= total_samples:
@@ -122,5 +146,7 @@ def sample_training_data(target_path, predictor_paths, total_samples=10000, wind
         return np.array(X), np.array(y)
     finally:
         # Close all opened predictor files
+        if src_target:
+            src_target.close()
         for src_pred in predictor_srcs:
             src_pred.close()
