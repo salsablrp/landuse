@@ -1,67 +1,60 @@
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-import rasterio
+import numpy as np
+import leafmap.foliumap as leafmap
+import streamlit as st
+import seaborn as sns
 
-import tempfile
-
-def plot_prediction(map_array, cmap_list, title="Prediction Map", show=True):
+# Keep your original plot_prediction for reference or other uses
+def plot_prediction(arr, cmap_list, title):
     """
-    Plot the prediction map with a custom colormap.
-    Works in both Jupyter and Streamlit (when passed to st.pyplot).
+    Generate a static plot of a predicted raster.
     """
-    fig, ax = plt.subplots(figsize=(10, 8))
-    ax.imshow(map_array, cmap=ListedColormap(cmap_list))
+    cmap = ListedColormap(cmap_list)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(arr, cmap=cmap, interpolation="nearest")
     ax.set_title(title)
-    ax.axis('off')
-    plt.tight_layout()
-    
-    if show:
-        plt.show()
+    ax.set_axis_off()
     return fig
 
-
-def save_prediction_as_tif(array, ref_profile, temp=True, out_path=None):
+def plot_confusion_matrix(cm, class_names):
     """
-    Save predicted map as GeoTIFF.
-
-    Args:
-        array (np.ndarray): Predicted map [H, W]
-        ref_profile (dict): Raster profile to match
-        temp (bool): If True, saves to temp file
-        out_path (str): Optional path to save to if not temp
-
-    Returns:
-        str: path to saved file
+    Generates a heatmap figure for a confusion matrix.
     """
-    profile = ref_profile.copy()
-    profile.update(dtype=rasterio.uint8, count=1, compress="lzw", nodata=255)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='g', ax=ax, cmap='Blues')
+    ax.set_xlabel('Predicted labels')
+    ax.set_ylabel('True labels')
+    ax.set_title('Confusion Matrix')
+    ax.xaxis.set_ticklabels(class_names)
+    ax.yaxis.set_ticklabels(class_names)
+    return fig
 
-    if temp:
-        out_path = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
-    elif not out_path:
-        out_path = "prediction_output.tif"
-
-    with rasterio.open(out_path, "w", **profile) as dst:
-        dst.write(array.astype(rasterio.uint8), 1)
-
-    return out_path
-
-
-def save_prediction_as_png(array, out_path="prediction_output.png"):
+def create_interactive_map(target_files, predictor_files, prediction_filepath):
     """
-    Save predicted map as a PNG.
-
-    Args:
-        array (np.ndarray): Predicted map [H, W]
-        out_path (str): PNG output file
-
-    Returns:
-        str: path to saved file
+    Creates an interactive leafmap with toggleable layers for all relevant files.
+    
+    This function reads rasters from their temporary file paths, which is memory-safe.
     """
-    plt.figure(figsize=(10, 10))
-    plt.imshow(array, cmap="tab20", interpolation="nearest")
-    plt.axis("off")
-    plt.tight_layout()
-    plt.savefig(out_path, bbox_inches="tight", pad_inches=0)
-    plt.close()
-    return out_path
+    st.info("Generating interactive map... This may take a moment for the first load.")
+    
+    m = leafmap.Map(center=[0, 0], zoom=2, locate_control=True, latlon_control=True, draw_export=True, minimap_control=True)
+
+    # Add Prediction Result first so it's on top
+    if prediction_filepath:
+        # Define a color map for the prediction layer
+        palette = ["#d9f0d3", "#addd8e", "#31a354", "#006d2c"]
+        m.add_raster(prediction_filepath, palette=palette, layer_name="Prediction Result")
+
+    # Add Target Layers
+    if target_files:
+        for file in target_files:
+            # leafmap can handle Streamlit's UploadedFile objects directly
+            m.add_raster(file, layer_name=f"Target: {file.name}")
+
+    # Add Predictor Layers
+    if predictor_files:
+        for file in predictor_files:
+            m.add_raster(file, layer_name=f"Predictor: {file.name}")
+            
+    return m

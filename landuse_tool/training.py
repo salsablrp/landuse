@@ -16,19 +16,6 @@ def train_rf(
 ):
     """
     Train a Random Forest classifier on predictor/target data.
-
-    Args:
-        X (np.ndarray): Predictor features (n_samples, n_features).
-        y (np.ndarray): Target labels (n_samples,).
-        test_size (float): Proportion for test set.
-        random_state (int): Seed for reproducibility.
-        n_estimators (int): Number of RF trees.
-        save_path (str): Optional path to save trained model (.joblib).
-        verbose (bool): Whether to print validation results.
-
-    Returns:
-        model: Trained RandomForestClassifier.
-        dict: Validation metrics (classification_report + confusion_matrix).
     """
     # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
@@ -46,7 +33,12 @@ def train_rf(
     report = classification_report(y_test, y_pred, output_dict=True)
     cm = confusion_matrix(y_test, y_pred)
 
-    metrics = {"report": report, "confusion_matrix": cm}
+    # --- MODIFICATION: Add class names to the metrics ---
+    metrics = {
+        "report": report, 
+        "confusion_matrix": cm,
+        "class_names": [str(c) for c in model.classes_] # Get class labels
+    }
 
     if verbose:
         print("Validation Results:")
