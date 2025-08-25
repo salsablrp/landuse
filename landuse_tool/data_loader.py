@@ -10,21 +10,23 @@ from .utils import reproject_raster, align_rasters, create_mask
 
 def _open_as_raster(file_object_or_path):
     """
-    Open a raster from either an uploaded file-like object or a local file path.
+    Open a raster from either an uploaded file-like object or a local path.
     Returns (array, profile).
     """
     if hasattr(file_object_or_path, "read"):
-        # Case 1: file-like object (Streamlit upload)
+        # UploadedFile -> copy to BytesIO so it's reusable
         file_bytes = file_object_or_path.read()
-        with MemoryFile(file_bytes) as memfile:
+        file_buffer = BytesIO(file_bytes)
+        with MemoryFile(file_buffer) as memfile:
             with memfile.open() as src:
                 arr = src.read(1)
                 profile = src.profile
     else:
-        # Case 2: local file path (string/Path) - this is for non-uploaded files
+        # Local file path
         with rasterio.open(str(file_object_or_path)) as src:
             arr = src.read(1)
             profile = src.profile
+
     return arr, profile
 
 def load_raster(file_object_or_path):
