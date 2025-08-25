@@ -106,35 +106,23 @@ def load_predictors(predictor_files, ref_profile=None, align=True):
         st.error(f"Error stacking predictor arrays: {e}")
         return None
 
-def sample_training_data(target_file, predictor_files, total_samples=10000, window_size=512):
+def sample_training_data(targets, predictors, total_samples=10000, window_size=512):
     X_samples = []
     y_samples = []
 
-    src_target = None
-    # No longer keeping a list of open predictor sources
-    predictor_srcs = []
-
     try:
-        # Open the target file once
-        src_target = rasterio.open(target_file)
-        lc_full = src_target.read(1)
-        src_profile = src_target.profile
-        width, height = src_profile["width"], src_profile["height"]
-        nodata = src_profile.get("nodata")
-        mask_full = (lc_full != 255) & (lc_full != 254) & (lc_full != nodata)
+        # Use the in-memory arrays directly from the arguments
+        lc_full = targets[0][-1]  # The latest target raster array
+        width, height = lc_full.shape[1], lc_full.shape[0]
+        mask_full = targets[1][-1] # The latest target mask
 
-        # Loop through windows for sampling
         for i in tqdm(range(0, height, window_size), desc="Sampling rows"):
             for j in range(0, width, window_size):
                 if len(X_samples) >= total_samples:
                     break
 
-                w = min(window_size, width - j)
-                h = min(window_size, height - i)
-                window = Window(j, i, w, h)
-
-                lc_window = lc_full[i:i+h, j:j+w]
-                mask_window = mask_full[i:i+h, j:j+w]
+                lc_window = lc_full[i:i+window_size, j:j+window_size]
+                mask_window = mask_full[i:i+window_size, j:j+window_size]
                 valid_rows, valid_cols = np.where(mask_window)
 
                 n_valid = len(valid_rows)
@@ -148,29 +136,11 @@ def sample_training_data(target_file, predictor_files, total_samples=10000, wind
                     r_win = valid_rows[idx]
                     c_win = valid_cols[idx]
 
-                    pixel_values = []
-                    valid_pixel = True
-                    # Open and close each predictor file for each pixel
-                    for f in predictor_files:
-                        src_pred = None
-                        try:
-                            src_pred = rasterio.open(f)
-                            val = src_pred.read(1, window=Window(j + c_win, i + r_win, 1, 1))[0, 0]
-                            if np.isnan(val):
-                                valid_pixel = False
-                                break
-                            pixel_values.append(val)
-                        except Exception as e:
-                            valid_pixel = False
-                            st.error(f"Error reading pixel from file '{getattr(f, 'name', 'unknown')}': {e}")
-                            break
-                        finally:
-                            if src_pred:
-                                src_pred.close()
+                    # Extract the pixel values directly from the in-memory predictors stack
+                    pixel_values = predictors[:, i + r_win, j + c_win].tolist()
                     
-                    if valid_pixel:
-                        X_samples.append(pixel_values)
-                        y_samples.append(lc_window[r_win, c_win])
+                    X_samples.append(pixel_values)
+                    y_samples.append(lc_window[r_win, c_win])
 
         # Filter classes with too few samples
         class_counts = Counter(y_samples)
@@ -183,9 +153,3 @@ def sample_training_data(target_file, predictor_files, total_samples=10000, wind
     except Exception as e:
         st.error(f"Error during training data sampling: {e}")
         return None, None
-    finally:
-        # Close the target file
-        if src_target:
-            src_target.close()
-        for src_pred in predictor_srcs:
-            src_pred.close()

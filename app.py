@@ -180,12 +180,10 @@ elif st.session_state.active_step == 2:
         if st.button("📥 Sample Training Data"):
             with st.spinner("Sampling training data..."):
                 try:
-                    latest_target_file = st.session_state.uploaded_targets[-1]
+                    # Pass the in-memory arrays directly to the sampling function
                     X, y = data_loader.sample_training_data(
-                        latest_target_file,
-                        st.session_state.uploaded_predictors,
-                        total_samples=5000,
-                        window_size=512
+                        targets=st.session_state.targets,
+                        predictors=st.session_state.predictors
                     )
                     if X is not None and y is not None:
                         st.session_state.X = X
