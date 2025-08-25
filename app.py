@@ -197,13 +197,25 @@ elif st.session_state.active_step == "Training":
         if st.session_state.sample_success:
             if st.button("⚡ Train Random Forest", disabled=st.session_state.train_success):
                 with st.spinner("Training model..."):
-                    model, _ = training.train_rf(st.session_state.X, st.session_state.y)
+                    model, metrics = training.train_rf(st.session_state.X, st.session_state.y)
                     st.session_state.model = model
+                    st.session_state.metrics = metrics # Store metrics
                     st.session_state.log.append("✅ Model trained successfully.")
                     st.session_state.train_success = True
                     st.rerun()
+        
+        if st.session_state.train_success:
+            st.subheader("📊 Model Performance")
+            report_df = pd.DataFrame(st.session_state.metrics['report']).transpose()
+            st.dataframe(report_df)
+            
+            cm_fig = visualization.plot_confusion_matrix(
+                st.session_state.metrics['confusion_matrix'], 
+                st.session_state.metrics['class_names']
+            )
+            st.pyplot(cm_fig)
 
-# --- Page: Scenario ---
+# --- Page: Scenario & Prediction ---
 elif st.session_state.active_step == "Scenario":
     st.header("Step 3: Define a Scenario (Optional)")
     st.markdown("""
@@ -225,7 +237,6 @@ elif st.session_state.active_step == "Scenario":
         value = col3.number_input("Value", value=1.0, format="%.2f")
         if st.button("➕ Add Change"):
             st.session_state.scenario_changes.append({"layer": selected_layer, "op": selected_op, "value": value})
-        
         if st.session_state.scenario_changes:
             st.markdown("### 📝 Current Scenario Changes")
             for i, change in enumerate(st.session_state.scenario_changes):
@@ -233,7 +244,6 @@ elif st.session_state.active_step == "Scenario":
             if st.button("🧹 Clear All Changes"):
                 st.session_state.scenario_changes = []
                 st.rerun()
-
         if st.button("🌱 Apply Scenario", disabled=not st.session_state.scenario_changes):
             progress_bar = st.progress(0, text="Applying scenario...")
             def cb(f, t): progress_bar.progress(f, text=t)
@@ -242,8 +252,6 @@ elif st.session_state.active_step == "Scenario":
             st.session_state.log.append("✅ Scenario applied successfully.")
             st.session_state.scenario_applied = True
             progress_bar.empty(); st.rerun()
-
-# --- Page: Prediction ---
 elif st.session_state.active_step == "Prediction":
     st.header("Step 4: Run Prediction")
     st.markdown("""
@@ -257,18 +265,13 @@ elif st.session_state.active_step == "Prediction":
     if not st.session_state.train_success:
         st.warning("⚠️ Please train a model in Step 2 first.")
     else:
-        prediction_mode = st.radio("Select Prediction Mode", ["Baseline", "Scenario"], horizontal=True, help="Choose 'Scenario' only if you have applied one in the previous step.")
-        
-        run_prediction = st.button("🛰️ Run Prediction", disabled=st.session_state.prediction_success)
-
-        if run_prediction:
+        prediction_mode = st.radio("Select Prediction Mode", ["Baseline", "Scenario"], horizontal=True)
+        if st.button("🛰️ Run Prediction"):
             predictor_source = st.session_state.uploaded_predictors
             if prediction_mode == "Scenario":
                 if not st.session_state.scenario_applied:
-                    st.error("You must apply a scenario in Step 3 before running a scenario prediction.")
-                    st.stop()
+                    st.error("You must apply a scenario in Step 3 first."); st.stop()
                 predictor_source = st.session_state.scenario_predictor_paths
-            
             progress_bar = st.progress(0, text="Starting prediction...")
             def cb(f, t): progress_bar.progress(f, text=t)
             predicted_filepath = prediction.predict_map_windowed(st.session_state.model, predictor_source, st.session_state.mask, st.session_state.ref_profile, progress_callback=cb)
