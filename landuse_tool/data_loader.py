@@ -46,28 +46,36 @@ def _open_as_raster(file_object_or_path):
 
 def load_targets(target_files, align=True):
     """
-    ROBUST & MEMORY-SAFE: This function validates all target files using
-    a disk-based temporary file strategy to keep memory usage minimal.
-    It only reads the pixel data from the last file to generate the mask.
+    ROBUST & MEMORY-SAFE: This function validates all target files and
+    creates the data mask in a memory-efficient way by processing the
+    last target file in windows instead of reading it all at once.
     """
     if not target_files or len(target_files) < 2:
         st.warning("Please upload at least two target files.")
         return None, None
 
     try:
-        # Lightweight validation: Open each file from a temp location to get its profile.
-        # This uses almost no RAM, regardless of file size.
-        profiles = []
+        # Lightweight validation: Open each file to check it's a valid raster.
         for f in target_files:
             with _open_as_raster(f) as src:
-                profiles.append(src.profile)
+                pass  # Just opening it is enough validation for now.
         
-        # Now, do a final read ONLY on the last file to get the mask.
+        # --- MEMORY-SAFE MASK CREATION ---
+        # Open the last target file to get its properties.
         with _open_as_raster(target_files[-1]) as src:
             ref_profile = src.profile
-            arr = src.read(1)
             nodata = src.nodata
-            mask = create_mask(arr, nodata=nodata)
+            
+            # Create an empty boolean array to hold the mask. This uses 8x less
+            # memory than reading the original raster data.
+            mask = np.empty((src.height, src.width), dtype=bool)
+
+            # Iterate over the raster in windows to build the mask piece by piece.
+            for _, window in src.block_windows(1):
+                window_data = src.read(1, window=window)
+                # Create the mask for the small window and place it in the larger array.
+                mask[window.row_off:window.row_off+window.height, 
+                     window.col_off:window.col_off+window.width] = (window_data != nodata)
 
         return ref_profile, mask
 
@@ -77,17 +85,27 @@ def load_targets(target_files, align=True):
 
 def load_predictors(predictor_files, ref_profile=None):
     """
-    MODIFIED: This function is a lightweight validator using the tempfile strategy.
+    MODIFIED: This function now validates that each predictor has the
+    same dimensions (width and height) as the reference profile. This
+    prevents IndexError during sampling.
     """
     if not predictor_files:
         return False
-        
+    
+    if not ref_profile:
+        st.error("Cannot validate predictors without a reference profile from the target files.")
+        return False
+
+    ref_width = ref_profile['width']
+    ref_height = ref_profile['height']
+    
     try:
         for f in predictor_files:
-            with _open_as_raster(f):
-                # Optional: Check if CRS matches ref_profile, etc.
-                pass
-        return True # Success
+            with _open_as_raster(f) as src:
+                if src.width != ref_width or src.height != ref_height:
+                    st.error(f"Dimension mismatch: Predictor '{f.name}' ({src.width}x{src.height}) does not match target dimensions ({ref_width}x{ref_height}). Please align your rasters.")
+                    return False
+        return True # Success, all dimensions match
     except Exception as e:
         st.error(f"Error validating predictor files: {e}")
         return False
