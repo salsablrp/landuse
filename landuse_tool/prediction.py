@@ -7,12 +7,13 @@ from contextlib import ExitStack
 
 from .data_loader import _open_as_raster
 
-def predict_map_windowed(model, predictor_files, mask, ref_profile, window_size=512):
+# --- FIX IS HERE: Added 'progress_callback=None' ---
+def predict_map_windowed(model, predictor_files, mask, ref_profile, window_size=512, progress_callback=None):
     """
     Generates a prediction map using windowed processing to keep memory usage low.
     Writes the output directly to a temporary GeoTIFF file.
     """
-    temp_file = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+    temp_file = tempfile.NamedTemporaryFile(suffix=".tif", delete=False, dir="/tmp")
     temp_filepath = temp_file.name
     temp_file.close()
 
@@ -21,23 +22,24 @@ def predict_map_windowed(model, predictor_files, mask, ref_profile, window_size=
 
     height, width = ref_profile['height'], ref_profile['width']
     
-    # Get the nodata value from the profile.
     nodata_val = out_profile.get('nodata')
     
-    # Check if the nodata value is None or not a valid uint8. If so, set a default.
-    # 255 is a common nodata value for uint8 thematic rasters.
     if nodata_val is None or not (0 <= nodata_val <= 255):
         nodata_val = 255
     
-    # Ensure the profile reflects the potentially new nodata value.
     out_profile['nodata'] = nodata_val
 
     with ExitStack() as stack:
         predictor_sources = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
         out_src = stack.enter_context(rasterio.open(temp_filepath, 'w', **out_profile))
 
-        for i in tqdm(range(0, height, window_size), desc="Predicting Rows"):
-            for j in tqdm(range(0, width, window_size), desc="Predicting Cols", leave=False):
+        # --- And here, we use the callback inside the loop ---
+        for i in range(0, height, window_size):
+            if progress_callback:
+                progress_fraction = i / height
+                progress_callback(progress_fraction, f"Predicting... {int(progress_fraction*100)}% complete")
+
+            for j in range(0, width, window_size):
                 
                 window = Window(j, i, min(window_size, width - j), min(window_size, height - i))
 
@@ -49,7 +51,6 @@ def predict_map_windowed(model, predictor_files, mask, ref_profile, window_size=
                 valid_pixels = window_stack[:, mask_window]
                 valid_pixels_reshaped = valid_pixels.T
 
-                # Use the validated nodata_val here
                 out_window = np.full(mask_window.shape, nodata_val, dtype=np.uint8)
 
                 if valid_pixels_reshaped.size > 0:
@@ -57,5 +58,8 @@ def predict_map_windowed(model, predictor_files, mask, ref_profile, window_size=
                     out_window[mask_window] = predictions.astype(np.uint8)
                 
                 out_src.write(out_window, 1, window=window)
+
+    if progress_callback:
+        progress_callback(1.0, "Prediction finished!")
 
     return temp_filepath
