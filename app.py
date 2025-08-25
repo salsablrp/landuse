@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 
-from landuse_tool import data_loader, prediction_ori, utils, training, scenarios, visualization
+from landuse_tool import data_loader, prediction, utils, training, scenarios, visualization
 
 st.set_page_config(layout="wide")
 st.title("🌍 Land Use Monitoring & Prediction Tool")
