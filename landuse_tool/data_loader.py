@@ -14,18 +14,19 @@ from .utils import reproject_raster, align_rasters, create_mask
 def _open_as_raster(file_object_or_path):
     """
     A context manager to safely open a raster from an uploaded file or a path.
-    This version writes uploaded files to a temporary location on disk to
-    avoid holding the entire file in RAM, which is crucial for memory-constrained
-    environments like Streamlit Cloud.
+    This version writes uploaded files to a temporary location on disk in chunks
+    to avoid holding the entire file in RAM. This is the most memory-safe method.
     """
     temp_filepath = None
     try:
         if hasattr(file_object_or_path, "read"):
             # This is a Streamlit UploadedFile object.
-            # Write its contents to a temporary file on disk.
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".tif") as tmp:
+            # Create the temp file in the system's /tmp directory to avoid
+            # triggering Streamlit's file watcher and hitting the inotify limit.
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".tif", dir="/tmp") as tmp:
                 temp_filepath = tmp.name
                 file_object_or_path.seek(0)
+                # Read and write in chunks to avoid memory spikes
                 while True:
                     chunk = file_object_or_path.read(16 * 1024)  # Read 16KB at a time
                     if not chunk:
@@ -110,7 +111,7 @@ def load_predictors(predictor_files, ref_profile=None):
         st.error(f"Error validating predictor files: {e}")
         return False
 
-def sample_training_data(target_files, predictor_files, ref_profile, total_samples=10000, window_size=512):
+def sample_training_data(target_files, predictor_files, ref_profile, total_samples=10000, window_size=512, progress_callback=None):
     """
     Efficiently samples training data using windowed reading to minimize memory usage.
     """
@@ -126,6 +127,10 @@ def sample_training_data(target_files, predictor_files, ref_profile, total_sampl
             nodata = lc_src.nodata
 
             for i in tqdm(range(0, height, window_size), desc="Sampling rows"):
+                if progress_callback:
+                    progress_fraction = i / height
+                    progress_callback(progress_fraction, f"Sampling... {int(progress_fraction*100)}% complete")
+
                 for j in tqdm(range(0, width, window_size), desc="Sampling columns", leave=False):
                     if len(y_samples) >= total_samples:
                         break
@@ -153,6 +158,9 @@ def sample_training_data(target_files, predictor_files, ref_profile, total_sampl
                 
                 if len(y_samples) >= total_samples:
                     break
+
+            if progress_callback:
+                progress_callback(1.0, "Finalizing samples...")
 
             if len(y_samples) == 0:
                 st.warning("No valid data points could be sampled.")
