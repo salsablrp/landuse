@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import rasterio
 import time
+import pandas as pd
 
 # --- Import your custom modules ---
 from landuse_tool import data_loader, prediction, utils, training, scenarios, visualization
