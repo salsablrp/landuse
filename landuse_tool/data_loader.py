@@ -91,21 +91,18 @@ def sample_training_data(target_files, predictor_files, ref_profile, total_sampl
 
     try:
         # Open all predictor files but don't read them into memory yet.
-        # We will read windows from them as needed.
         predictor_sources = [_open_as_raster(f) for f in predictor_files]
         
         # We only need the latest target file for sampling y values
         latest_target_file = target_files[-1]
         
         with _open_as_raster(latest_target_file) as lc_src:
-            # Align the target's profile if necessary (conceptual)
-            # In a full implementation, you'd reproject/resample windows on the fly if needed.
-            # For now, we assume they are aligned as per your original logic.
             width, height = lc_src.width, lc_src.height
             nodata = lc_src.nodata
 
             for i in tqdm(range(0, height, window_size), desc="Sampling rows"):
-                for j in range(0, width, window_size), desc="Sampling columns", leave=False):
+                # THIS IS THE CORRECTED LINE:
+                for j in tqdm(range(0, width, window_size), desc="Sampling columns", leave=False):
                     if len(y_samples) >= total_samples:
                         break
                     
@@ -139,6 +136,10 @@ def sample_training_data(target_files, predictor_files, ref_profile, total_sampl
                         
                         X_samples.append(pixel_values)
                         y_samples.append(lc_window[r, c])
+                
+                # Break the outer loop as well if we have enough samples
+                if len(y_samples) >= total_samples:
+                    break
 
             if len(y_samples) == 0:
                 st.warning("No valid data points could be sampled.")
@@ -162,5 +163,6 @@ def sample_training_data(target_files, predictor_files, ref_profile, total_sampl
         # Ensure sources are closed on error
         if 'predictor_sources' in locals():
             for src in predictor_sources:
-                src.close()
+                if not src.closed:
+                    src.close()
         return None, None
