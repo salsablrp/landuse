@@ -1,51 +1,16 @@
 import streamlit as st
 import os
-import tempfile
-import shutil
 
 from landuse_tool import data_loader, utils, training, prediction, scenarios, visualization
 
 st.set_page_config(layout="wide")
 st.title("🌍 Land Use Monitoring & Prediction Tool")
 
-# --- Helper function to save uploaded files to a temporary location ---
-def save_uploaded_files(uploaded_files):
-    """Saves multiple uploaded files to a temporary location and returns the paths."""
-    # Create a temporary directory unique to this session
-    temp_dir = tempfile.mkdtemp()
-    st.session_state.temp_dir = temp_dir
-    paths = []
-    for uploaded_file in uploaded_files:
-        try:
-            path = os.path.join(temp_dir, uploaded_file.name)
-            with open(path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            paths.append(path)
-        except Exception as e:
-            st.error(f"Error saving file '{uploaded_file.name}': {e}")
-            # If an error occurs, clean up the directory and return None
-            shutil.rmtree(temp_dir)
-            st.session_state.temp_dir = None
-            return None
-    return paths
-
-# --- Cleanup function to remove temp files ---
-def cleanup_temp_dir():
-    """Removes the temporary directory and all its contents."""
-    if "temp_dir" in st.session_state and st.session_state.temp_dir:
-        try:
-            st.info(f"Cleaning up temporary directory: {st.session_state.temp_dir}")
-            shutil.rmtree(st.session_state.temp_dir)
-        except Exception as e:
-            st.warning(f"Failed to clean up temporary directory: {e}")
-        finally:
-            st.session_state.temp_dir = None
-
-# --- Initialize Session State and Cleanup ---
+# --- Initialize Session State ---
 if "step" not in st.session_state:
     st.session_state.step = 0
-    # Clean up any old temp directories on initial load
-    cleanup_temp_dir()
+    st.session_state.targets_loaded = False
+    st.session_state.predictors_loaded = False
 
 defaults = {
     "targets": None,
@@ -60,9 +25,9 @@ defaults = {
     "geotiff_saved": None,
     "png_saved": None,
     "scenario_changes": [],
-    "target_paths": [],
-    "predictor_paths": [],
-    "temp_dir": None
+    "uploaded_targets": [],
+    "uploaded_predictors": [],
+    "ref_profile": None
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -70,10 +35,9 @@ for k, v in defaults.items():
 
 # --- Reset Workflow ---
 def reset_all():
-    cleanup_temp_dir()
     st.session_state.clear()
     st.session_state.step = 0
-    st.info("Workflow has been reset. Please refresh the app.")
+    st.info("Workflow has been reset.")
 
 st.sidebar.button("🔄 Reset Workflow", on_click=reset_all)
 
@@ -133,28 +97,23 @@ elif st.session_state.active_step == 1:
     )
 
     if uploaded_targets:
-        with st.spinner("Saving uploaded targets..."):
-            target_paths = save_uploaded_files(uploaded_targets)
-            if target_paths:
-                st.session_state.target_paths = target_paths
-                st.info(f"Loaded {len(target_paths)} target files.")
-            else:
-                st.session_state.target_paths = []
+        if uploaded_targets != st.session_state.uploaded_targets:
+            st.session_state.uploaded_targets = uploaded_targets
+            st.session_state.targets_loaded = False
 
-    if st.session_state.target_paths:
-        try:
-            with st.spinner("Processing targets..."):
-                arrays, masks, profiles = data_loader.load_targets(st.session_state.target_paths, align=True)
-                if arrays and len(arrays) > 0:
-                    st.session_state.targets = (arrays, masks, profiles)
-                    st.session_state.profiles = profiles
-                    st.success("Successfully processed targets.")
-                else:
-                    st.error("Target processing failed. Check the files for errors.")
-        except Exception as e:
-            st.error(f"An unexpected error occurred during target processing: {e}")
-            st.session_state.targets = None
-            st.session_state.profiles = None
+    if st.session_state.uploaded_targets and not st.session_state.targets_loaded:
+        with st.spinner("Processing targets..."):
+            arrays, masks, profiles = data_loader.load_targets(st.session_state.uploaded_targets, align=True)
+            if arrays and len(arrays) > 0:
+                st.session_state.targets = (arrays, masks, profiles)
+                st.session_state.ref_profile = profiles[-1]
+                st.session_state.targets_loaded = True
+                st.success("Successfully processed targets.")
+                st.info(f"Loaded {len(arrays)} target files.")
+            else:
+                st.error("Target processing failed. Check the files for errors.")
+                st.session_state.targets_loaded = False
+                st.session_state.uploaded_targets = []
 
     st.subheader("1b. Upload Predictor Rasters")
     uploaded_predictors = st.file_uploader(
@@ -165,31 +124,26 @@ elif st.session_state.active_step == 1:
     )
 
     if uploaded_predictors:
-        with st.spinner("Saving uploaded predictors..."):
-            predictor_paths = save_uploaded_files(uploaded_predictors)
-            if predictor_paths:
-                st.session_state.predictor_paths = predictor_paths
-                st.info(f"Loaded {len(predictor_paths)} predictor files.")
+        if uploaded_predictors != st.session_state.uploaded_predictors:
+            st.session_state.uploaded_predictors = uploaded_predictors
+            st.session_state.predictors_loaded = False
+
+    if st.session_state.uploaded_predictors and st.session_state.ref_profile and not st.session_state.predictors_loaded:
+        with st.spinner("Processing predictors..."):
+            predictors = data_loader.load_predictors(
+                st.session_state.uploaded_predictors,
+                st.session_state.ref_profile
+            )
+            if predictors is not None:
+                st.session_state.predictors = predictors
+                st.session_state.predictors_loaded = True
+                st.success(f"Loaded predictors stack with shape {predictors.shape}")
             else:
-                st.session_state.predictor_paths = []
+                st.error("Predictor processing failed. Check the files for errors.")
+                st.session_state.predictors_loaded = False
+                st.session_state.uploaded_predictors = []
 
-    if st.session_state.predictor_paths and st.session_state.profiles:
-        try:
-            with st.spinner("Processing predictors..."):
-                predictors = data_loader.load_predictors(
-                    st.session_state.predictor_paths,
-                    st.session_state.profiles[0]
-                )
-                if predictors is not None:
-                    st.session_state.predictors = predictors
-                    st.success(f"Loaded predictors stack with shape {predictors.shape}")
-                else:
-                    st.error("Predictor processing failed. Check the files for errors.")
-        except Exception as e:
-            st.error(f"An unexpected error occurred during predictor processing: {e}")
-            st.session_state.predictors = None
-
-    if st.session_state.targets and st.session_state.predictors is not None:
+    if st.session_state.targets_loaded and st.session_state.predictors_loaded:
         col1, col2 = st.columns(2)
         with col1:
             if st.button("➡️ Proceed to Training"):
@@ -220,19 +174,16 @@ elif st.session_state.active_step == 2:
     This model will then be used to predict future land cover changes.
     """)
 
-    predictor_paths = st.session_state.get("predictor_paths", [])
-    target_paths = st.session_state.get("target_paths", [])
-
-    if not predictor_paths or not target_paths:
+    if not st.session_state.targets_loaded or not st.session_state.predictors_loaded:
         st.warning("⚠️ No files found. Go back to Step 1 and upload them.")
     else:
         if st.button("📥 Sample Training Data"):
             with st.spinner("Sampling training data..."):
                 try:
-                    latest_target = target_paths[-1]
+                    latest_target_file = st.session_state.uploaded_targets[-1]
                     X, y = data_loader.sample_training_data(
-                        latest_target,
-                        predictor_paths,
+                        latest_target_file,
+                        st.session_state.uploaded_predictors,
                         total_samples=5000,
                         window_size=512
                     )
@@ -278,9 +229,8 @@ elif st.session_state.active_step == 3:
     else:
         if st.button("🛰️ Run Prediction"):
             with st.spinner("Running prediction..."):
-                arrays, masks, profiles = st.session_state.targets
-                mask = masks[-1]
-                ref_profile = profiles[-1]
+                mask = st.session_state.targets[1][-1]
+                ref_profile = st.session_state.ref_profile
                 predictors = st.session_state.scenario_stack or st.session_state.predictors
 
                 predicted = prediction.predict_map(
@@ -324,11 +274,10 @@ elif st.session_state.active_step == 4:
     The modified predictor stack can be used for scenario-based predictions in Step 3.
     """)
 
-    predictor_paths = st.session_state.get("predictor_paths", [])
-    if not predictor_paths:
+    if not st.session_state.predictors_loaded:
         st.warning("⚠️ No predictor files found. Go back to Step 1 and upload them.")
     else:
-        predictor_filenames = [os.path.basename(f) for f in predictor_paths]
+        predictor_filenames = [f.name for f in st.session_state.uploaded_predictors]
 
         scenario_name = st.text_input("Scenario name", "My Scenario")
 
@@ -364,7 +313,7 @@ elif st.session_state.active_step == 4:
         if st.button("🌱 Apply Scenario"):
             scenario_stack = scenarios.apply_scenario(
                 stack=st.session_state.predictors,
-                predictor_paths=predictor_paths,
+                uploaded_predictors=st.session_state.uploaded_predictors,
                 scenario_def={
                     "name": scenario_name,
                     "changes": st.session_state.scenario_changes

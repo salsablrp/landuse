@@ -1,5 +1,6 @@
 import rasterio
 from rasterio.windows import Window
+from rasterio.io import MemoryFile
 import numpy as np
 from collections import Counter
 from tqdm import tqdm
@@ -7,30 +8,46 @@ import streamlit as st # Import streamlit for error messages
 
 from .utils import reproject_raster, align_rasters, create_mask
 
-def load_raster(path):
+def _open_as_raster(file_object_or_path):
     """
-    Load a single raster from a given path.
+    Open a raster from either an uploaded file-like object or a local file path.
+    Returns (array, profile).
     """
-    try:
-        with rasterio.open(path) as src:
+    if hasattr(file_object_or_path, "read"):
+        # Case 1: file-like object (Streamlit upload)
+        file_bytes = file_object_or_path.read()
+        with MemoryFile(file_bytes) as memfile:
+            with memfile.open() as src:
+                arr = src.read(1)
+                profile = src.profile
+    else:
+        # Case 2: local file path (string/Path) - this is for non-uploaded files
+        with rasterio.open(str(file_object_or_path)) as src:
             arr = src.read(1)
             profile = src.profile
-        return arr, profile
+    return arr, profile
+
+def load_raster(file_object_or_path):
+    """
+    Load a single raster and return (array, profile).
+    """
+    try:
+        return _open_as_raster(file_object_or_path)
     except Exception as e:
-        st.error(f"Error loading raster file '{path}': {e}")
+        st.error(f"Error loading raster file '{getattr(file_object_or_path, 'name', 'unknown')}': {e}")
         return None, None
 
-def load_targets(target_paths, align=True):
+def load_targets(target_files, align=True):
     """
-    Load multi-temporal land cover rasters from a list of paths.
+    Load multi-temporal land cover rasters from a list of files or paths.
     Args:
-        target_paths (list[str]): List of file paths.
+        target_files (list[Union[str, UploadedFile]]): List of file objects or paths.
     Returns:
         arrays, masks, profiles
     """
     raster_list = []
-    for path in target_paths:
-        arr, profile = load_raster(path)
+    for f in target_files:
+        arr, profile = load_raster(f)
         if arr is not None:
             raster_list.append((arr, profile))
 
@@ -54,14 +71,14 @@ def load_targets(target_paths, align=True):
         return [], [], []
 
 
-def load_predictors(predictor_paths, ref_profile=None, align=True):
+def load_predictors(predictor_files, ref_profile=None, align=True):
     """
-    Load predictor rasters from a list of paths, align them to a reference.
+    Load predictor rasters from a list of files, align them to a reference.
     Returns stacked predictors [bands, height, width].
     """
     raster_list = []
-    for path in predictor_paths:
-        arr, profile = load_raster(path)
+    for f in predictor_files:
+        arr, profile = load_raster(f)
         if arr is not None:
             raster_list.append((arr, profile))
 
@@ -89,7 +106,7 @@ def load_predictors(predictor_paths, ref_profile=None, align=True):
         st.error(f"Error stacking predictor arrays: {e}")
         return None
 
-def sample_training_data(target_path, predictor_paths, total_samples=10000, window_size=512):
+def sample_training_data(target_file, predictor_files, total_samples=10000, window_size=512):
     X_samples = []
     y_samples = []
 
@@ -97,7 +114,7 @@ def sample_training_data(target_path, predictor_paths, total_samples=10000, wind
     predictor_srcs = []
 
     try:
-        src_target = rasterio.open(target_path)
+        src_target = rasterio.open(target_file)
         lc_full = src_target.read(1)
         src_profile = src_target.profile
         width, height = src_profile["width"], src_profile["height"]
@@ -105,8 +122,8 @@ def sample_training_data(target_path, predictor_paths, total_samples=10000, wind
         mask_full = (lc_full != 255) & (lc_full != 254) & (lc_full != nodata)
 
         # We need to open the predictor rasters only once
-        for path in predictor_paths:
-            predictor_srcs.append(rasterio.open(path))
+        for f in predictor_files:
+            predictor_srcs.append(rasterio.open(f))
 
         for i in tqdm(range(0, height, window_size), desc="Sampling rows"):
             for j in range(0, width, window_size):
