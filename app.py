@@ -96,25 +96,28 @@ elif st.session_state.active_step == 1:
         key="targets_uploader"
     )
 
-    if uploaded_targets:
-        if uploaded_targets != st.session_state.uploaded_targets:
-            st.session_state.uploaded_targets = uploaded_targets
-            st.session_state.targets_loaded = False
+    if uploaded_targets and uploaded_targets != st.session_state.uploaded_targets:
+        st.session_state.uploaded_targets = uploaded_targets
+        st.session_state.targets_loaded = False
+        st.session_state.predictors_loaded = False
 
     if st.session_state.uploaded_targets and not st.session_state.targets_loaded:
         with st.spinner("Processing targets..."):
-            arrays, masks, profiles = data_loader.load_targets(st.session_state.uploaded_targets, align=True)
-            if arrays and len(arrays) > 0:
-                st.session_state.targets = (arrays, masks, profiles)
-                st.session_state.ref_profile = profiles[-1]
-                st.session_state.targets_loaded = True
-                st.success("Successfully processed targets.")
-                st.info(f"Loaded {len(arrays)} target files.")
-            else:
-                st.error("Target processing failed. Check the files for errors.")
+            try:
+                arrays, masks, profiles = data_loader.load_targets(st.session_state.uploaded_targets, align=True)
+                if arrays and len(arrays) > 0:
+                    st.session_state.targets = (arrays, masks, profiles)
+                    st.session_state.ref_profile = profiles[-1]
+                    st.session_state.targets_loaded = True
+                    st.success("Successfully processed targets.")
+                    st.info(f"Loaded {len(arrays)} target files.")
+                else:
+                    st.session_state.targets_loaded = False
+                    st.error("Target processing failed. Check the files for errors.")
+            except Exception as e:
                 st.session_state.targets_loaded = False
-                st.session_state.uploaded_targets = []
-
+                st.error(f"An unexpected error occurred during target processing: {e}")
+                
     st.subheader("1b. Upload Predictor Rasters")
     uploaded_predictors = st.file_uploader(
         "Upload predictor rasters",
@@ -123,25 +126,27 @@ elif st.session_state.active_step == 1:
         key="predictors_uploader"
     )
 
-    if uploaded_predictors:
-        if uploaded_predictors != st.session_state.uploaded_predictors:
-            st.session_state.uploaded_predictors = uploaded_predictors
-            st.session_state.predictors_loaded = False
+    if uploaded_predictors and uploaded_predictors != st.session_state.uploaded_predictors:
+        st.session_state.uploaded_predictors = uploaded_predictors
+        st.session_state.predictors_loaded = False
 
     if st.session_state.uploaded_predictors and st.session_state.ref_profile and not st.session_state.predictors_loaded:
         with st.spinner("Processing predictors..."):
-            predictors = data_loader.load_predictors(
-                st.session_state.uploaded_predictors,
-                st.session_state.ref_profile
-            )
-            if predictors is not None:
-                st.session_state.predictors = predictors
-                st.session_state.predictors_loaded = True
-                st.success(f"Loaded predictors stack with shape {predictors.shape}")
-            else:
-                st.error("Predictor processing failed. Check the files for errors.")
+            try:
+                predictors = data_loader.load_predictors(
+                    st.session_state.uploaded_predictors,
+                    st.session_state.ref_profile
+                )
+                if predictors is not None:
+                    st.session_state.predictors = predictors
+                    st.session_state.predictors_loaded = True
+                    st.success(f"Loaded predictors stack with shape {predictors.shape}")
+                else:
+                    st.session_state.predictors_loaded = False
+                    st.error("Predictor processing failed. Check the files for errors.")
+            except Exception as e:
                 st.session_state.predictors_loaded = False
-                st.session_state.uploaded_predictors = []
+                st.error(f"An unexpected error occurred during predictor processing: {e}")
 
     if st.session_state.targets_loaded and st.session_state.predictors_loaded:
         col1, col2 = st.columns(2)
