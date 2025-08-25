@@ -41,31 +41,36 @@ def load_raster(file_object_or_path):
 
 def load_targets(target_files, align=True):
     """
-    MODIFIED: This function now primarily extracts profiles and the final mask.
-    It AVOIDS loading all raster arrays into memory.
+    MODIFIED: This function is now memory-efficient. It only reads the
+    full array of the LAST target file to get the reference profile and mask.
     """
-    raster_info = []
-    for f in target_files:
-        # Using the memory-safe _open_as_raster that returns a dataset object
-        with _open_as_raster(f) as src:
-            raster_info.append({'profile': src.profile, 'name': f.name})
-    
-    if not raster_info:
-        st.warning("No valid target rasters were found.")
+    if not target_files:
+        st.warning("No target files were provided.")
         return None, None
     
-    # You might perform alignment checks on the profiles here without loading data
-    # For simplicity, we'll skip the complex align_rasters logic for now.
-    
-    profiles = [info['profile'] for info in raster_info]
-    
-    # Only load the MASK of the latest target raster, which is usually small.
-    with _open_as_raster(target_files[-1]) as src:
-        arr = src.read(1)
-        nodata = src.nodata
-        mask = create_mask(arr, nodata=nodata) # Assuming create_mask is memory-efficient
+    # We assume the last uploaded file is the reference for the grid and mask.
+    last_target_file = target_files[-1]
 
-    return profiles, mask
+    try:
+        # Perform a full read ONLY on the last file.
+        with _open_as_raster(last_target_file) as src:
+            ref_profile = src.profile
+            arr = src.read(1)
+            nodata = src.nodata
+            mask = create_mask(arr, nodata=nodata)
+
+        # For all other target files, just do a quick validation to ensure they can be opened.
+        # This uses very little memory as it doesn't read the pixel data.
+        for f in target_files[:-1]:
+            with _open_as_raster(f):
+                pass # The 'with' block just confirms the file is a valid raster.
+        
+        # The function now returns a single profile, not a list.
+        return ref_profile, mask
+
+    except Exception as e:
+        st.error(f"An error occurred while processing target files: {e}")
+        return None, None
 
 def load_predictors(predictor_files, ref_profile=None):
     """

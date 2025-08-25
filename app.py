@@ -99,13 +99,17 @@ elif st.session_state.active_step == 1:
     if uploaded_targets and uploaded_targets != st.session_state.uploaded_targets:
         st.session_state.uploaded_targets = uploaded_targets
         st.session_state.targets_loaded = False
+        st.session_state.predictors_loaded = False
 
     if st.session_state.uploaded_targets and not st.session_state.targets_loaded:
         with st.spinner("Processing targets..."):
             try:
-                profiles, mask = data_loader.load_targets(st.session_state.uploaded_targets, align=True)
-                if profiles:
-                    st.session_state.ref_profile = profiles[-1]
+                # MODIFIED: The function now returns ref_profile directly
+                ref_profile, mask = data_loader.load_targets(st.session_state.uploaded_targets, align=True)
+                
+                if ref_profile and mask is not None:
+                    # MODIFIED: Assign the returned profile directly
+                    st.session_state.ref_profile = ref_profile
                     st.session_state.mask = mask
                     st.session_state.targets_loaded = True
                     st.success("Successfully processed targets.")
@@ -127,6 +131,9 @@ elif st.session_state.active_step == 1:
     if uploaded_predictors and uploaded_predictors != st.session_state.uploaded_predictors:
         st.session_state.uploaded_predictors = uploaded_predictors
         st.session_state.predictors_loaded = False
+
+    if st.session_state.uploaded_predictors and not st.session_state.targets_loaded:
+        st.info("Please upload the target files first. Predictors will be validated after the targets are loaded.")
 
     if st.session_state.uploaded_predictors and st.session_state.ref_profile and not st.session_state.predictors_loaded:
             with st.spinner("Processing predictors..."):
