@@ -1,5 +1,6 @@
 from io import BytesIO
 from contextlib import contextmanager
+from contextlib import ExitStack
 
 import rasterio
 from rasterio.windows import Window
@@ -94,30 +95,27 @@ def sample_training_data(target_files, predictor_files, ref_profile, total_sampl
     X_samples = []
     y_samples = []
 
-    try:
-        # Open all predictor files but don't read them into memory yet.
-        predictor_sources = [_open_as_raster(f) for f in predictor_files]
-        
-        # We only need the latest target file for sampling y values
-        latest_target_file = target_files[-1]
-        
-        with _open_as_raster(latest_target_file) as lc_src:
+    # Use ExitStack to manage multiple file contexts
+    with ExitStack() as stack:
+        try:
+            # Open all predictor files and add them to the stack
+            predictor_sources = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
+            
+            # Open the latest target file
+            lc_src = stack.enter_context(_open_as_raster(target_files[-1]))
+            
             width, height = lc_src.width, lc_src.height
             nodata = lc_src.nodata
 
+            # ... (the rest of the function is the same, no changes needed inside the loops) ...
             for i in tqdm(range(0, height, window_size), desc="Sampling rows"):
-                # THIS IS THE CORRECTED LINE:
                 for j in tqdm(range(0, width, window_size), desc="Sampling columns", leave=False):
                     if len(y_samples) >= total_samples:
                         break
                     
-                    # Define the window to read
                     window = Window(j, i, min(window_size, width - j), min(window_size, height - i))
-
-                    # Read only the window from the target raster
                     lc_window = lc_src.read(1, window=window)
                     
-                    # Create a mask for valid data within the window
                     mask_window = (lc_window != nodata) & (lc_window is not None)
                     valid_rows_win, valid_cols_win = np.where(mask_window)
 
@@ -125,24 +123,18 @@ def sample_training_data(target_files, predictor_files, ref_profile, total_sampl
                     if n_valid == 0:
                         continue
 
-                    # Decide how many samples to take from this window
                     n_samples_from_window = min(100, n_valid) 
                     sample_indices = np.random.choice(n_valid, size=n_samples_from_window, replace=False)
 
-                    # Read the corresponding window from all predictor rasters
                     predictor_windows = [p_src.read(1, window=window) for p_src in predictor_sources]
                     
                     for idx in sample_indices:
                         r = valid_rows_win[idx]
                         c = valid_cols_win[idx]
-
-                        # Get the predictor values for the specific pixel (r, c) in the window
                         pixel_values = [p_win[r, c] for p_win in predictor_windows]
-                        
                         X_samples.append(pixel_values)
                         y_samples.append(lc_window[r, c])
                 
-                # Break the outer loop as well if we have enough samples
                 if len(y_samples) >= total_samples:
                     break
 
@@ -150,24 +142,13 @@ def sample_training_data(target_files, predictor_files, ref_profile, total_sampl
                 st.warning("No valid data points could be sampled.")
                 return None, None
 
-        # Filter classes with too few samples (as before)
-        class_counts = Counter(y_samples)
-        valid_classes = {cls for cls, count in class_counts.items() if count >= 2}
+            class_counts = Counter(y_samples)
+            valid_classes = {cls for cls, count in class_counts.items() if count >= 2}
+            X = [x for x, y in zip(X_samples, y_samples) if y in valid_classes]
+            y = [y for y in y_samples if y in valid_classes]
 
-        X = [x for x, y in zip(X_samples, y_samples) if y in valid_classes]
-        y = [y for y in y_samples if y in valid_classes]
+            return np.array(X), np.array(y)
 
-        # Close all the raster files
-        for src in predictor_sources:
-            src.close()
-
-        return np.array(X), np.array(y)
-
-    except Exception as e:
-        st.error(f"Error during optimized training data sampling: {e}")
-        # Ensure sources are closed on error
-        if 'predictor_sources' in locals():
-            for src in predictor_sources:
-                if not src.closed:
-                    src.close()
-        return None, None
+        except Exception as e:
+            st.error(f"Error during optimized training data sampling: {e}")
+            return None, None

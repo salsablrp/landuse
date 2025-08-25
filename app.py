@@ -177,9 +177,8 @@ elif st.session_state.active_step == 2:
         if st.button("📥 Sample Training Data"):
             with st.spinner("Sampling training data... This may take a while for large files."):
                 try:
-                    # IMPORTANT CHANGE HERE:
-                    # We no longer use the pre-loaded arrays. We pass the file objects.
-                    X, y = data_loader.sample_training_data_optimized(
+                    # CORRECTED FUNCTION NAME
+                    X, y = data_loader.sample_training_data(
                         target_files=st.session_state.uploaded_targets,
                         predictor_files=st.session_state.uploaded_predictors,
                         ref_profile=st.session_state.ref_profile
@@ -226,17 +225,15 @@ elif st.session_state.active_step == 3:
     else:
         if st.button("🛰️ Run Prediction"):
             with st.spinner("Running prediction..."):
-                mask = st.session_state.targets[1][-1]
-                ref_profile = st.session_state.ref_profile
-                predictors = st.session_state.scenario_stack or st.session_state.predictors
-
-                predicted = prediction_ori.predict_map(
+                # CORRECTED: Use the new function and session state variables
+                predicted_filepath = prediction.predict_map_windowed(
                     model=st.session_state.model,
-                    X_stack=predictors,
-                    mask=mask,
-                    ref_profile=ref_profile
+                    predictor_files=st.session_state.uploaded_predictors, # Use the file list
+                    mask=st.session_state.mask, # Use the mask from session state
+                    ref_profile=st.session_state.ref_profile
                 )
-                st.session_state.predicted = predicted
+                # Store the FILEPATH of the result, not the array
+                st.session_state.predicted_filepath = predicted_filepath
                 st.session_state.prediction_success = True
                 st.success("Prediction complete.")
 
