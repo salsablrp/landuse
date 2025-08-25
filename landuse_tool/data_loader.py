@@ -1,3 +1,4 @@
+from io import BytesIO
 import rasterio
 from rasterio.windows import Window
 from rasterio.io import MemoryFile
