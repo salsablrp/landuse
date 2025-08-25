@@ -291,13 +291,15 @@ elif st.session_state.active_step == "Visualization":
     - Export the predicted land cover as PNG or GeoTIFF.
     - Compare baseline predictions with scenario outcomes (if available).
     """)
-    if not st.session_state.prediction_success:
-        st.warning("⚠️ No prediction available. Please generate one in the Prediction step.")
+    if not st.session_state.uploaded_targets and not st.session_state.uploaded_predictors:
+        st.warning("⚠️ No data available to visualize. Please upload files in Step 1.")
     else:
-        # --- NEW: Interactive Map Visualization ---
+        # The map will be generated with whichever layers are available.
+        st.info("Use the layer control icon in the top right of the map to toggle layers on and off.")
+        
         m = visualization.create_interactive_map(
             target_files=st.session_state.uploaded_targets,
             predictor_files=st.session_state.uploaded_predictors,
-            prediction_filepath=st.session_state.predicted_filepath
+            prediction_filepath=st.session_state.predicted_filepath # This will be None if prediction hasn't run
         )
         m.to_streamlit(height=700)
