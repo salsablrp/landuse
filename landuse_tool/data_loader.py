@@ -3,6 +3,7 @@ from rasterio.windows import Window
 import numpy as np
 from collections import Counter
 from tqdm import tqdm
+import streamlit as st # Import streamlit for error messages
 
 from .utils import reproject_raster, align_rasters, create_mask
 
@@ -10,11 +11,14 @@ def load_raster(path):
     """
     Load a single raster from a given path.
     """
-    with rasterio.open(path) as src:
-        arr = src.read(1)
-        profile = src.profile
-    return arr, profile
-
+    try:
+        with rasterio.open(path) as src:
+            arr = src.read(1)
+            profile = src.profile
+        return arr, profile
+    except Exception as e:
+        st.error(f"Error loading raster file '{path}': {e}")
+        return None, None
 
 def load_targets(target_paths, align=True):
     """
@@ -26,23 +30,28 @@ def load_targets(target_paths, align=True):
     """
     raster_list = []
     for path in target_paths:
-        src = None
-        try:
-            src = rasterio.open(path)
-            arr = src.read(1)
-            profile = src.profile
+        arr, profile = load_raster(path)
+        if arr is not None:
             raster_list.append((arr, profile))
-        finally:
-            if src:
-                src.close()
 
-    if align and len(raster_list) > 1:
-        raster_list = align_rasters(raster_list)
+    if not raster_list:
+        st.warning("No valid target rasters were loaded.")
+        return [], [], []
 
-    arrays, profiles = zip(*raster_list)
-    masks = [create_mask(arr, nodata=prof.get("nodata")) for arr, prof in raster_list]
+    try:
+        if align and len(raster_list) > 1:
+            raster_list = align_rasters(raster_list)
+    except Exception as e:
+        st.error(f"Error aligning target rasters: {e}")
+        return [], [], []
 
-    return arrays, masks, profiles
+    try:
+        arrays, profiles = zip(*raster_list)
+        masks = [create_mask(arr, nodata=prof.get("nodata")) for arr, prof in raster_list]
+        return arrays, masks, profiles
+    except Exception as e:
+        st.error(f"Error processing target raster data: {e}")
+        return [], [], []
 
 
 def load_predictors(predictor_paths, ref_profile=None, align=True):
@@ -52,29 +61,33 @@ def load_predictors(predictor_paths, ref_profile=None, align=True):
     """
     raster_list = []
     for path in predictor_paths:
-        src = None
-        try:
-            src = rasterio.open(path)
-            arr = src.read(1)
-            profile = src.profile
+        arr, profile = load_raster(path)
+        if arr is not None:
             raster_list.append((arr, profile))
-        finally:
-            if src:
-                src.close()
+
+    if not raster_list:
+        st.warning("No valid predictor rasters were loaded.")
+        return None
 
     if ref_profile and align:
         aligned = []
         from .utils import resample_raster
-        for arr, prof in raster_list:
-            aligned_arr = resample_raster(arr, prof, ref_profile)
-            aligned.append((aligned_arr, ref_profile))
-        raster_list = aligned
+        try:
+            for arr, prof in raster_list:
+                aligned_arr = resample_raster(arr, prof, ref_profile)
+                aligned.append((aligned_arr, ref_profile))
+            raster_list = aligned
+        except Exception as e:
+            st.error(f"Error aligning predictor rasters: {e}")
+            return None
 
-    arrays, _ = zip(*raster_list)
-    stack = np.stack(arrays, axis=0)
-
-    return stack
-
+    try:
+        arrays, _ = zip(*raster_list)
+        stack = np.stack(arrays, axis=0)
+        return stack
+    except Exception as e:
+        st.error(f"Error stacking predictor arrays: {e}")
+        return None
 
 def sample_training_data(target_path, predictor_paths, total_samples=10000, window_size=512):
     X_samples = []
@@ -144,6 +157,9 @@ def sample_training_data(target_path, predictor_paths, total_samples=10000, wind
         y = [y for y in y_samples if y in valid_classes]
 
         return np.array(X), np.array(y)
+    except Exception as e:
+        st.error(f"Error during training data sampling: {e}")
+        return None, None
     finally:
         # Close all opened predictor files
         if src_target:
