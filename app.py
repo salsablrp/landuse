@@ -99,7 +99,6 @@ elif st.session_state.active_step == 1:
     if uploaded_targets and uploaded_targets != st.session_state.uploaded_targets:
         st.session_state.uploaded_targets = uploaded_targets
         st.session_state.targets_loaded = False
-        st.session_state.predictors_loaded = False
 
     if st.session_state.uploaded_targets and not st.session_state.targets_loaded:
         with st.spinner("Processing targets..."):
