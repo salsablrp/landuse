@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import tempfile
+import shutil
 
 from landuse_tool import data_loader, utils, training, prediction, scenarios, visualization
 
@@ -8,22 +9,43 @@ st.set_page_config(layout="wide")
 st.title("🌍 Land Use Monitoring & Prediction Tool")
 
 # --- Helper function to save uploaded files to a temporary location ---
-def save_uploaded_file(uploaded_file):
-    """Saves an uploaded file to a temporary location and returns the path."""
-    try:
-        # Use tempfile to create a temporary directory and save the file
-        temp_dir = tempfile.mkdtemp()
-        path = os.path.join(temp_dir, uploaded_file.name)
-        with open(path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        return path
-    except Exception as e:
-        st.error(f"Error saving file: {e}")
-        return None
+def save_uploaded_files(uploaded_files):
+    """Saves multiple uploaded files to a temporary location and returns the paths."""
+    # Create a temporary directory unique to this session
+    temp_dir = tempfile.mkdtemp()
+    st.session_state.temp_dir = temp_dir
+    paths = []
+    for uploaded_file in uploaded_files:
+        try:
+            path = os.path.join(temp_dir, uploaded_file.name)
+            with open(path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            paths.append(path)
+        except Exception as e:
+            st.error(f"Error saving file '{uploaded_file.name}': {e}")
+            # If an error occurs, clean up the directory and return None
+            shutil.rmtree(temp_dir)
+            st.session_state.temp_dir = None
+            return None
+    return paths
 
-# --- Initialize Session State ---
+# --- Cleanup function to remove temp files ---
+def cleanup_temp_dir():
+    """Removes the temporary directory and all its contents."""
+    if "temp_dir" in st.session_state and st.session_state.temp_dir:
+        try:
+            st.info(f"Cleaning up temporary directory: {st.session_state.temp_dir}")
+            shutil.rmtree(st.session_state.temp_dir)
+        except Exception as e:
+            st.warning(f"Failed to clean up temporary directory: {e}")
+        finally:
+            st.session_state.temp_dir = None
+
+# --- Initialize Session State and Cleanup ---
 if "step" not in st.session_state:
     st.session_state.step = 0
+    # Clean up any old temp directories on initial load
+    cleanup_temp_dir()
 
 defaults = {
     "targets": None,
@@ -38,8 +60,9 @@ defaults = {
     "geotiff_saved": None,
     "png_saved": None,
     "scenario_changes": [],
-    "target_paths": [],  # Storing the temporary file paths
-    "predictor_paths": [], # Storing the temporary file paths
+    "target_paths": [],
+    "predictor_paths": [],
+    "temp_dir": None
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -47,8 +70,10 @@ for k, v in defaults.items():
 
 # --- Reset Workflow ---
 def reset_all():
+    cleanup_temp_dir()
     st.session_state.clear()
     st.session_state.step = 0
+    st.info("Workflow has been reset. Please refresh the app.")
 
 st.sidebar.button("🔄 Reset Workflow", on_click=reset_all)
 
@@ -108,12 +133,28 @@ elif st.session_state.active_step == 1:
     )
 
     if uploaded_targets:
-        target_paths = [save_uploaded_file(f) for f in uploaded_targets]
-        st.session_state.target_paths = target_paths
-        arrays, masks, profiles = data_loader.load_targets(target_paths, align=True)
-        st.session_state.targets = (arrays, masks, profiles)
-        st.session_state.profiles = profiles
-        st.success(f"Loaded {len(arrays)} target rasters.")
+        with st.spinner("Saving uploaded targets..."):
+            target_paths = save_uploaded_files(uploaded_targets)
+            if target_paths:
+                st.session_state.target_paths = target_paths
+                st.info(f"Loaded {len(target_paths)} target files.")
+            else:
+                st.session_state.target_paths = []
+
+    if st.session_state.target_paths:
+        try:
+            with st.spinner("Processing targets..."):
+                arrays, masks, profiles = data_loader.load_targets(st.session_state.target_paths, align=True)
+                if arrays and len(arrays) > 0:
+                    st.session_state.targets = (arrays, masks, profiles)
+                    st.session_state.profiles = profiles
+                    st.success("Successfully processed targets.")
+                else:
+                    st.error("Target processing failed. Check the files for errors.")
+        except Exception as e:
+            st.error(f"An unexpected error occurred during target processing: {e}")
+            st.session_state.targets = None
+            st.session_state.profiles = None
 
     st.subheader("1b. Upload Predictor Rasters")
     uploaded_predictors = st.file_uploader(
@@ -123,15 +164,32 @@ elif st.session_state.active_step == 1:
         key="predictors_uploader"
     )
 
-    if uploaded_predictors and st.session_state.targets:
-        predictor_paths = [save_uploaded_file(f) for f in uploaded_predictors]
-        st.session_state.predictor_paths = predictor_paths
-        ref_profile = st.session_state.profiles[0]
-        predictors = data_loader.load_predictors(predictor_paths, ref_profile)
-        st.session_state.predictors = predictors
-        st.success(f"Loaded predictors stack with shape {predictors.shape}")
+    if uploaded_predictors:
+        with st.spinner("Saving uploaded predictors..."):
+            predictor_paths = save_uploaded_files(uploaded_predictors)
+            if predictor_paths:
+                st.session_state.predictor_paths = predictor_paths
+                st.info(f"Loaded {len(predictor_paths)} predictor files.")
+            else:
+                st.session_state.predictor_paths = []
 
-    if st.session_state.target_paths and st.session_state.predictor_paths:
+    if st.session_state.predictor_paths and st.session_state.profiles:
+        try:
+            with st.spinner("Processing predictors..."):
+                predictors = data_loader.load_predictors(
+                    st.session_state.predictor_paths,
+                    st.session_state.profiles[0]
+                )
+                if predictors is not None:
+                    st.session_state.predictors = predictors
+                    st.success(f"Loaded predictors stack with shape {predictors.shape}")
+                else:
+                    st.error("Predictor processing failed. Check the files for errors.")
+        except Exception as e:
+            st.error(f"An unexpected error occurred during predictor processing: {e}")
+            st.session_state.predictors = None
+
+    if st.session_state.targets and st.session_state.predictors is not None:
         col1, col2 = st.columns(2)
         with col1:
             if st.button("➡️ Proceed to Training"):
@@ -143,6 +201,9 @@ elif st.session_state.active_step == 1:
 
     if st.session_state.get("show_maps"):
         st.subheader("🗺️ Map Preview")
+        # Note: Visualizing uploaded rasters on leafmap requires more logic
+        # For now, we'll just show the map without the data.
+        import leafmap
         m = leafmap.Map(center=[0, 0], zoom=2)
         m.to_streamlit(height=500)
 
@@ -161,7 +222,7 @@ elif st.session_state.active_step == 2:
 
     predictor_paths = st.session_state.get("predictor_paths", [])
     target_paths = st.session_state.get("target_paths", [])
-    
+
     if not predictor_paths or not target_paths:
         st.warning("⚠️ No files found. Go back to Step 1 and upload them.")
     else:
@@ -175,10 +236,14 @@ elif st.session_state.active_step == 2:
                         total_samples=5000,
                         window_size=512
                     )
-                    st.session_state.X = X
-                    st.session_state.y = y
-                    st.session_state.sample_success = True
-                    st.success(f"Sampled {len(X)} training points.")
+                    if X is not None and y is not None:
+                        st.session_state.X = X
+                        st.session_state.y = y
+                        st.session_state.sample_success = True
+                        st.success(f"Sampled {len(X)} training points.")
+                    else:
+                        st.session_state.sample_success = False
+                        st.error("Sampling failed. Check error messages above.")
                 except Exception as e:
                     st.error(f"Sampling failed: {e}")
 
