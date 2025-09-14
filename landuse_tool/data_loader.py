@@ -111,68 +111,74 @@ def load_predictors(predictor_files, ref_profile=None):
         st.error(f"Error validating predictor files: {e}")
         return False
 
-def sample_training_data(target_files, predictor_files, ref_profile, total_samples=10000, window_size=512, progress_callback=None):
+def sample_training_data_stratified(target_files, predictor_files, samples_per_class=2000, progress_callback=None):
     """
-    Efficiently samples training data using windowed reading to minimize memory usage.
+    Performs stratified sampling to create a balanced training dataset.
+    This is crucial for preventing the model from only learning the majority class.
     """
-    X_samples = []
-    y_samples = []
+    if progress_callback is None:
+        def progress_callback(frac, text): pass
 
-    with ExitStack() as stack:
-        try:
-            predictor_sources = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
-            lc_src = stack.enter_context(_open_as_raster(target_files[-1]))
+    progress_callback(0.0, "Starting stratified sampling...")
+
+    # --- Step 1: Identify classes and their locations (memory-safe) ---
+    class_locations = {}
+    with _open_as_raster(target_files[-1]) as lc_src:
+        nodata = lc_src.nodata
+        total_blocks = sum(1 for _ in lc_src.block_windows(1))
+        current_block = 0
+        for _, window in lc_src.block_windows(1):
+            current_block += 1
+            progress_callback(0.1 + (0.4 * (current_block / total_blocks)), f"Scanning for classes... (block {current_block}/{total_blocks})")
+            lc_window = lc_src.read(1, window=window)
+            valid_mask = (lc_window != nodata) & (lc_window is not None)
             
-            width, height = lc_src.width, lc_src.height
-            nodata = lc_src.nodata
-
-            for i in tqdm(range(0, height, window_size), desc="Sampling rows"):
-                if progress_callback:
-                    progress_fraction = i / height
-                    progress_callback(progress_fraction, f"Sampling... {int(progress_fraction*100)}% complete")
-
-                for j in tqdm(range(0, width, window_size), desc="Sampling columns", leave=False):
-                    if len(y_samples) >= total_samples:
-                        break
-                    
-                    window = Window(j, i, min(window_size, width - j), min(window_size, height - i))
-                    lc_window = lc_src.read(1, window=window)
-                    
-                    mask_window = (lc_window != nodata) & (lc_window is not None)
-                    valid_rows_win, valid_cols_win = np.where(mask_window)
-
-                    n_valid = len(valid_rows_win)
-                    if n_valid == 0:
-                        continue
-
-                    n_samples_from_window = min(100, n_valid) 
-                    sample_indices = np.random.choice(n_valid, size=n_samples_from_window, replace=False)
-
-                    predictor_windows = [p_src.read(1, window=window) for p_src in predictor_sources]
-                    
-                    for idx in sample_indices:
-                        r, c = valid_rows_win[idx], valid_cols_win[idx]
-                        pixel_values = [p_win[r, c] for p_win in predictor_windows]
-                        X_samples.append(pixel_values)
-                        y_samples.append(lc_window[r, c])
+            unique_classes = np.unique(lc_window[valid_mask])
+            for cls in unique_classes:
+                if cls not in class_locations:
+                    class_locations[cls] = []
                 
-                if len(y_samples) >= total_samples:
-                    break
+                # Get coordinates relative to the window, then convert to global coordinates
+                rows, cols = np.where(lc_window == cls)
+                global_rows, global_cols = rows + window.row_off, cols + window.col_off
+                class_locations[cls].extend(zip(global_rows, global_cols))
 
-            if progress_callback:
-                progress_callback(1.0, "Finalizing samples...")
+    if not class_locations:
+        st.error("Could not find any valid data classes in the target raster.")
+        return None, None
 
-            if len(y_samples) == 0:
-                st.warning("No valid data points could be sampled.")
-                return None, None
+    # --- Step 2: Create balanced samples for each class ---
+    X_samples, y_samples = [], []
+    with ExitStack() as stack:
+        predictor_sources = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
+        
+        num_classes = len(class_locations)
+        current_class_idx = 0
+        for cls, locations in class_locations.items():
+            current_class_idx += 1
+            progress_callback(0.5 + (0.5 * (current_class_idx / num_classes)), f"Sampling class {cls}...")
+            
+            # If a class has fewer pixels than desired, take all of them
+            num_to_sample = min(samples_per_class, len(locations))
+            
+            # Randomly choose indices for the locations to sample
+            sample_indices = np.random.choice(len(locations), num_to_sample, replace=False)
+            
+            for idx in sample_indices:
+                r, c = locations[idx]
+                
+                # Read the single pixel value from each predictor raster
+                try:
+                    pixel_values = [src.read(1, window=Window(c, r, 1, 1))[0, 0] for src in predictor_sources]
+                    X_samples.append(pixel_values)
+                    y_samples.append(cls)
+                except Exception as e:
+                    # This can happen if a pixel is on the edge, safely skip it
+                    continue
 
-            class_counts = Counter(y_samples)
-            valid_classes = {cls for cls, count in class_counts.items() if count >= 2}
-            X = [x for x, y in zip(X_samples, y_samples) if y in valid_classes]
-            y = [y for y in y_samples if y in valid_classes]
-
-            return np.array(X), np.array(y)
-
-        except Exception as e:
-            st.error(f"Error during optimized training data sampling: {e}")
-            return None, None
+    if not X_samples:
+        st.error("Sampling resulted in an empty dataset. Check raster alignment and data values.")
+        return None, None
+        
+    progress_callback(1.0, "Sampling complete.")
+    return np.array(X_samples), np.array(y_samples)

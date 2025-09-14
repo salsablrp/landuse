@@ -187,13 +187,27 @@ elif st.session_state.active_step == "Training":
     if not st.session_state.predictors_loaded:
         st.warning("⚠️ Please complete Step 1 first.")
     else:
+        st.subheader("Sampling Options")
+        samples_per_class = st.slider(
+            "Samples per Class", 
+            min_value=100, 
+            max_value=5000, 
+            value=2000, 
+            step=100,
+            help="Number of training points to sample for each land cover class. A balanced dataset helps the model learn better."
+        )
         if st.button("📥 Sample Training Data", disabled=st.session_state.sample_success):
             progress_bar = st.progress(0, text="Starting sampling...")
             def cb(f, t): progress_bar.progress(f, text=t)
-            X, y = data_loader.sample_training_data(st.session_state.uploaded_targets, st.session_state.uploaded_predictors, st.session_state.ref_profile, progress_callback=cb)
+            X, y = data_loader.sample_training_data_stratified(
+                st.session_state.uploaded_targets, 
+                st.session_state.uploaded_predictors,
+                samples_per_class=samples_per_class,
+                progress_callback=cb
+            )
             if X is not None and y is not None:
                 st.session_state.X, st.session_state.y = X, y
-                st.session_state.log.append(f"✅ Sampled {len(X)} training points.")
+                st.session_state.log.append(f"✅ Sampled a balanced dataset with {len(X)} total points.")
                 st.session_state.sample_success = True
                 progress_bar.empty(); st.rerun()
         if st.session_state.sample_success:
