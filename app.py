@@ -132,7 +132,7 @@ elif st.session_state.active_step == "3. Train AI":
 elif st.session_state.active_step == "4. Simulate Future":
     st.header("Step 4: Simulate Future Land Cover")
     st.markdown("This final step uses a Cellular Automata to allocate the projected change across the landscape based on the AI-generated suitability maps.")
-    if not st.session_state.train_success:
+    if not st.session_state.training_complete:
         st.warning("⚠️ Please train the AI models in Step 3 first.")
     else:
         if st.button("🛰️ Run Simulation", disabled=st.session_state.simulation_success):
