@@ -1,38 +1,65 @@
-import numpy as np
 import rasterio
+import numpy as np
+from rasterio.windows import Window
+from tqdm import tqdm
+import tempfile
+from contextlib import ExitStack
 
-def predict_map(model, X_stack, mask, ref_profile, nodata=255, save_path=None, batch_size=50_000, progress_callback=None):
+from .data_loader import _open_as_raster
+
+# --- FIX IS HERE: Added 'progress_callback=None' ---
+def predict_map_windowed(model, predictor_files, mask, ref_profile, window_size=512, progress_callback=None):
     """
-    Apply trained model to predictor stack and return classified raster.
+    Generates a prediction map using windowed processing to keep memory usage low.
+    Writes the output directly to a temporary GeoTIFF file.
     """
-    X_flat = X_stack.reshape(X_stack.shape[0], -1).T
-    valid_mask = mask.flatten()
-    X_valid = X_flat[valid_mask]
+    temp_file = tempfile.NamedTemporaryFile(suffix=".tif", delete=False, dir="/tmp")
+    temp_filepath = temp_file.name
+    temp_file.close()
 
-    # Predict in batches
-    y_pred = []
-    total = X_valid.shape[0]
+    out_profile = ref_profile.copy()
+    out_profile.update(dtype=rasterio.uint8, count=1, compress='lzw')
 
-    for i in range(0, total, batch_size):
-        batch = X_valid[i:i+batch_size]
-        y_pred.append(model.predict(batch))
+    height, width = ref_profile['height'], ref_profile['width']
+    
+    nodata_val = out_profile.get('nodata')
+    
+    if nodata_val is None or not (0 <= nodata_val <= 255):
+        nodata_val = 255
+    
+    out_profile['nodata'] = nodata_val
 
-        # Call progress callback (0.0 to 1.0)
-        if progress_callback:
-            progress_callback(min((i + batch_size) / total, 1.0))
+    with ExitStack() as stack:
+        predictor_sources = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
+        out_src = stack.enter_context(rasterio.open(temp_filepath, 'w', **out_profile))
 
-    y_pred = np.concatenate(y_pred)
+        # --- And here, we use the callback inside the loop ---
+        for i in range(0, height, window_size):
+            if progress_callback:
+                progress_fraction = i / height
+                progress_callback(progress_fraction, f"Predicting... {int(progress_fraction*100)}% complete")
 
-    # Fill output
-    y_full = np.full(mask.size, nodata, dtype=np.uint8)
-    y_full[valid_mask] = y_pred
-    y_map = y_full.reshape(mask.shape)
+            for j in range(0, width, window_size):
+                
+                window = Window(j, i, min(window_size, width - j), min(window_size, height - i))
 
-    # Optional save
-    if save_path:
-        profile = ref_profile.copy()
-        profile.update(dtype=rasterio.uint8, count=1, nodata=nodata)
-        with rasterio.open(save_path, "w", **profile) as dst:
-            dst.write(y_map, 1)
+                window_stack = np.array([p_src.read(1, window=window) for p_src in predictor_sources])
+                
+                mask_window = mask[window.row_off:window.row_off + window.height, 
+                                   window.col_off:window.col_off + window.width]
+                
+                valid_pixels = window_stack[:, mask_window]
+                valid_pixels_reshaped = valid_pixels.T
 
-    return y_map
+                out_window = np.full(mask_window.shape, nodata_val, dtype=np.uint8)
+
+                if valid_pixels_reshaped.size > 0:
+                    predictions = model.predict(valid_pixels_reshaped)
+                    out_window[mask_window] = predictions.astype(np.uint8)
+                
+                out_src.write(out_window, 1, window=window)
+
+    if progress_callback:
+        progress_callback(1.0, "Prediction finished!")
+
+    return temp_filepath

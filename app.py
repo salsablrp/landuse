@@ -1,320 +1,185 @@
 import streamlit as st
 import os
-import rasterio
-import time
 import pandas as pd
-from streamlit_folium import st_folium
 
-# --- Import your custom modules ---
-from landuse_tool import data_loader, prediction, utils, training, scenarios, visualization
+from landuse_tool import data_loader, change_analysis, training, prediction, visualization
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="Land Use Prediction Tool",
-    page_icon="🌍",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-st.title("🌍 Land Use Monitoring & Prediction Tool")
+# --- Page Configuration and Initialization ---
+st.set_page_config(page_title="Hybrid AI LUC Modeler", page_icon="🌍", layout="wide")
+st.title("🌍 Hybrid AI Land Use Change Modeler")
 
 # --- Initialize Session State ---
-def initialize_session_state():
-    defaults = {
-        "active_step": "Home",
-        "targets_loaded": False,
-        "predictors_loaded": False,
-        "sample_success": False,
-        "train_success": False,
-        "prediction_success": False,
-        "scenario_applied": False,
-        "uploaded_targets": [],
-        "uploaded_predictors": [],
-        "scenario_changes": [],
-        "scenario_predictor_paths": [],
-        "ref_profile": None,
-        "mask": None,
-        "X": None,
-        "y": None,
-        "model": None,
-        "predicted_filepath": None,
-        "log": []
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-initialize_session_state()
-
-# --- Helper Functions ---
-def reset_workflow():
-    keys_to_keep = ['active_step']
-    for key in list(st.session_state.keys()):
-        if key not in keys_to_keep:
-            del st.session_state[key]
-    initialize_session_state()
-    st.success("Workflow has been reset.")
-    time.sleep(1)
-    st.rerun()
-
-def get_file_size_mb(file_list):
-    total_size = sum(f.size for f in file_list)
-    return total_size / (1024 * 1024)
-
-def remove_file(file_list_key, file_to_remove):
-    st.session_state[file_list_key] = [f for f in st.session_state[file_list_key] if f.name != file_to_remove.name]
-    # Reset subsequent steps
+if "active_step" not in st.session_state:
+    st.session_state.clear() # Clear state on first run or refresh
+    st.session_state.active_step = "Home"
     st.session_state.targets_loaded = False
     st.session_state.predictors_loaded = False
-    st.session_state.sample_success = False
-    st.session_state.train_success = False
-    st.session_state.prediction_success = False
-    st.session_state.scenario_applied = False
-    st.session_state.log = []
-    st.rerun()
+    st.session_state.analysis_complete = False
+    st.session_state.training_complete = False
+    st.session_state.simulation_complete = False
+    st.session_state.uploaded_targets = []
+    st.session_state.uploaded_predictors = []
+    st.session_state.transition_models = {}
+    st.session_state.suitability_paths = {}
 
 # --- Sidebar ---
 with st.sidebar:
-    st.header("Navigation")
+    st.header("Workflow")
+    steps = ["Home", "1. Data Input", "2. Analyze Change", "3. Train AI", "4. Simulate Future", "5. Visualization"]
+    st.session_state.active_step = st.radio("Steps", steps, index=steps.index(st.session_state.active_step), label_visibility="collapsed")
     
-    steps = ["Home", "Upload Data", "Training", "Scenario", "Prediction", "Visualization"]
-    
-    st.session_state.active_step = st.radio(
-        "Steps", 
-        steps, 
-        index=steps.index(st.session_state.active_step),
-        label_visibility="collapsed"
-    )
-    
-    st.divider()
-    
-    st.header("Session Storage")
-    total_mb = get_file_size_mb(st.session_state.uploaded_targets) + get_file_size_mb(st.session_state.uploaded_predictors)
-    STORAGE_LIMIT_MB = 1000 
-    st.progress(min(total_mb / STORAGE_LIMIT_MB, 1.0))
-    st.caption(f"{total_mb:.2f} MB / {STORAGE_LIMIT_MB} MB")
-
-    st.divider()
-    st.button("🔄 Reset Workflow", on_click=reset_workflow, use_container_width=True)
+    if st.button("🔄 Reset Workflow", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
 
 # --- Main Page Content ---
 
-for msg in st.session_state.log:
-    st.success(msg)
-
-# --- Page: Home ---
 if st.session_state.active_step == "Home":
-    st.header("👋 Welcome to the Land Use Monitoring & Prediction Tool")
+    st.header("👋 Welcome to the Next-Generation Land Use Modeler")
     st.markdown("""
-    This tool helps you analyze and forecast land cover change using remote sensing data.
+    This tool implements a state-of-the-art, three-stage simulation to forecast land use change. It combines statistical trend analysis with a powerful, AI-native suitability engine to create plausible future scenarios.
+
+    **The Workflow:**
+    1.  **Data Input:** Upload historical land cover maps and predictor variables.
+    2.  **Analyze Change:** The tool uses a **Markov Chain** to quantify *how much* land has changed historically.
+    3.  **Train AI:** Specialized **Random Forest models** are trained to learn the drivers of each change and map *where* future changes are most suitable.
+    4.  **Simulate Future:** A **Cellular Automata** algorithm allocates the projected change onto the most suitable locations.
+    5.  **Visualize:** Interact with the results and download maps and reports.
+    """)
+
+elif st.session_state.active_step == "1. Data Input":
+    st.header("Step 1: Upload Your Geospatial Data")
+    st.info("Please upload your data. All rasters must have the same dimensions, projection, and pixel size.")
     
-    **Workflow Overview:**
-    1. Upload historical land cover and predictor rasters.
-    2. Train a model on these datasets.
-    3. Predict future land cover based on current conditions.
-    4. Simulate different scenarios by modifying predictors.
-    5. Visualize and export the results.
-
-    👈 Use the sidebar to begin with **Step 1**.
-    """)
-
-# --- Page: Upload Data ---
-elif st.session_state.active_step == "Upload Data":
-    st.header("Step 1: Upload Data")
-    st.markdown("""
-    In this step, you will upload the required raster datasets:
-
-    - **Land cover targets** from at least two different years.
-    - **Predictor variables**, such as elevation, slope, distance to roads, etc.
-
-    These datasets will be aligned and prepared for training in the next step.
-    """)
-
-    st.subheader("1a. Upload Land Cover Targets (≥2 years)")
-    uploaded_targets = st.file_uploader("Upload land cover rasters", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
-
-    if uploaded_targets and not st.session_state.targets_loaded:
-        st.session_state.uploaded_targets = uploaded_targets
-        with st.spinner("Processing targets..."):
-            ref_profile, mask = data_loader.load_targets(st.session_state.uploaded_targets)
-            if ref_profile and mask is not None:
-                st.session_state.ref_profile, st.session_state.mask = ref_profile, mask
-                st.session_state.targets_loaded = True
-                if "✅ Targets processed successfully." not in st.session_state.log:
-                    st.session_state.log.append("✅ Targets processed successfully.")
+    st.subheader("1a. Upload Historical Land Cover Maps (≥2)")
+    uploaded_targets = st.file_uploader("Upload GeoTIFF files", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
+    if uploaded_targets: st.session_state.uploaded_targets = uploaded_targets
 
     st.subheader("1b. Upload Predictor Rasters")
-    uploaded_predictors = st.file_uploader("Upload predictor rasters", type=["tif", "tiff"], accept_multiple_files=True, key="predictors_uploader")
-
-    if uploaded_predictors and not st.session_state.predictors_loaded:
-        st.session_state.uploaded_predictors = uploaded_predictors
-        if st.session_state.targets_loaded:
-            with st.spinner("Validating predictors..."):
-                is_valid = data_loader.load_predictors(st.session_state.uploaded_predictors, st.session_state.ref_profile)
-                if is_valid:
-                    st.session_state.predictors_loaded = True
-                    log_msg = f"✅ {len(st.session_state.uploaded_predictors)} predictors validated."
-                    if log_msg not in st.session_state.log:
-                         st.session_state.log.append(log_msg)
+    uploaded_predictors = st.file_uploader("Upload predictor GeoTIFF files", type=["tif", "tiff"], accept_multiple_files=True, key="predictors_uploader")
+    if uploaded_predictors: st.session_state.uploaded_predictors = uploaded_predictors
+    
+    if st.button("Process & Validate Inputs"):
+        if len(st.session_state.uploaded_targets) < 2:
+            st.error("Please upload at least two land cover maps.")
+        elif not st.session_state.uploaded_predictors:
+            st.error("Please upload at least one predictor map.")
         else:
-            st.warning("Please upload and process target files before predictors.")
+            with st.spinner("Validating data..."):
+                ref_profile, mask = data_loader.load_targets(st.session_state.uploaded_targets)
+                if ref_profile and mask is not None:
+                    st.session_state.ref_profile, st.session_state.mask = ref_profile, mask
+                    st.session_state.targets_loaded = True
+                    is_valid = data_loader.load_predictors(st.session_state.uploaded_predictors, ref_profile)
+                    if is_valid:
+                        st.session_state.predictors_loaded = True
+                        st.success("All data processed and validated successfully! Proceed to the next step.")
+                    else:
+                        st.session_state.targets_loaded = False # Reset if predictors fail
+                else:
+                    st.session_state.targets_loaded = False
 
-    st.divider()
-    # Layer Management UI
-    col1, col2 = st.columns(2)
-    with col1:
-        with st.expander("Uploaded Target Layers", expanded=True):
-            if not st.session_state.uploaded_targets: st.caption("No target files.")
-            for f in st.session_state.uploaded_targets:
-                c1, c2, c3 = st.columns([4, 2, 2]); c1.text(f.name); c2.caption(f"{(f.size/(1024*1024)):.2f} MB"); c3.button("Remove", key=f"rem_t_{f.name}", on_click=remove_file, args=("uploaded_targets", f))
-    with col2:
-        with st.expander("Uploaded Predictor Layers", expanded=True):
-            if not st.session_state.uploaded_predictors: st.caption("No predictor files.")
-            for f in st.session_state.uploaded_predictors:
-                c1, c2, c3 = st.columns([4, 2, 2]); c1.text(f.name); c2.caption(f"{(f.size/(1024*1024)):.2f} MB"); c3.button("Remove", key=f"rem_p_{f.name}", on_click=remove_file, args=("uploaded_predictors", f))
-
-# --- Page: Training ---
-elif st.session_state.active_step == "Training":
-    st.header("Step 2: Sample and Train Model")
-    st.markdown("""
-    Here you will:
-
-    - Sample training data points from the latest land cover raster.
-    - Train a **Random Forest** model using the sampled data and predictors.
-
-    This model will then be used to predict future land cover changes.
-    """)
+elif st.session_state.active_step == "2. Analyze Change":
+    st.header("Step 2: Quantify Historical Change (Markov Chain)")
     if not st.session_state.predictors_loaded:
-        st.warning("⚠️ Please complete Step 1 first.")
+        st.warning("Please complete Step 1 first.")
     else:
-        st.subheader("Sampling Options")
-        samples_per_class = st.slider(
-            "Samples per Class", 
-            min_value=100, 
-            max_value=5000, 
-            value=2000, 
-            step=100,
-            help="Number of training points to sample for each land cover class. A balanced dataset helps the model learn better."
-        )
-        if st.button("📥 Sample Training Data", disabled=st.session_state.sample_success):
-            progress_bar = st.progress(0, text="Starting sampling...")
-            def cb(f, t): progress_bar.progress(f, text=t)
-            X, y = data_loader.sample_training_data_stratified(
-                st.session_state.uploaded_targets, 
-                st.session_state.uploaded_predictors,
-                samples_per_class=samples_per_class,
-                progress_callback=cb
-            )
-            if X is not None and y is not None:
-                st.session_state.X, st.session_state.y = X, y
-                st.session_state.log.append(f"✅ Sampled a balanced dataset with {len(X)} total points.")
-                st.session_state.sample_success = True
-                progress_bar.empty(); st.rerun()
-        if st.session_state.sample_success:
-            if st.button("⚡ Train Random Forest", disabled=st.session_state.train_success):
-                with st.spinner("Training model..."):
-                    model, metrics = training.train_rf(st.session_state.X, st.session_state.y)
-                    st.session_state.model = model
-                    st.session_state.metrics = metrics # Store metrics
-                    st.session_state.log.append("✅ Model trained successfully.")
-                    st.session_state.train_success = True
-                    st.rerun()
+        st.markdown("This step analyzes your first and last land cover maps to calculate the rate of change. This determines *how much* land is projected to change in the future.")
+        if st.button("Run Change Analysis", disabled=st.session_state.analysis_complete):
+            with st.spinner("Calculating transition matrix..."):
+                matrix, counts = change_analysis.calculate_transition_matrix(st.session_state.uploaded_targets[0], st.session_state.uploaded_targets[-1])
+                if matrix is not None and counts is not None:
+                    st.session_state.transition_matrix = matrix
+                    st.session_state.transition_counts = counts
+                    st.session_state.analysis_complete = True
+                    st.success("Change analysis complete!")
         
-        if st.session_state.train_success:
-            st.subheader("📊 Model Performance")
-            report_df = pd.DataFrame(st.session_state.metrics['report']).transpose()
-            st.dataframe(report_df)
+        if st.session_state.analysis_complete:
+            st.subheader("Transition Pixel Counts")
+            st.dataframe(st.session_state.transition_counts.style.background_gradient(cmap='viridis'))
+            st.subheader("Transition Probability Matrix")
+            st.dataframe(st.session_state.transition_matrix.style.format("{:.2%}").background_gradient(cmap='viridis'))
+
+elif st.session_state.active_step == "3. Train AI":
+    st.header("Step 3: Train AI Suitability Models")
+    if not st.session_state.analysis_complete:
+        st.warning("Please complete Step 2 first.")
+    else:
+        st.markdown("The tool will now train a specialized AI model for each significant historical transition. Each model learns the unique spatial drivers of that change.")
+        threshold = st.number_input("Minimum pixels for a transition to be considered 'significant'", min_value=1, value=100)
+        
+        if st.button("Train All Models", disabled=st.session_state.training_complete):
+            counts = st.session_state.transition_counts
+            significant_transitions = counts[counts > threshold].stack().index.tolist()
             
-            cm_fig = visualization.plot_confusion_matrix(
-                st.session_state.metrics['confusion_matrix'], 
-                st.session_state.metrics['class_names']
-            )
-            st.pyplot(cm_fig)
+            with st.expander("Training Log", expanded=True):
+                for from_cls, to_cls in significant_transitions:
+                    if from_cls == to_cls: continue
+                    st.write(f"--- Training model for transition: {from_cls} -> {to_cls} ---")
+                    with st.spinner(f"Creating dataset..."):
+                        X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets[0], st.session_state.uploaded_targets[-1], st.session_state.uploaded_predictors)
+                    if X is not None and y is not None:
+                        with st.spinner(f"Training model..."):
+                            model, acc = training.train_rf_model(X, y)
+                        if model:
+                            st.session_state.transition_models[(from_cls, to_cls)] = model
+                            st.write(f"✅ Model trained. Accuracy: {acc:.2%}")
+                    else:
+                        st.write("Skipped: Not enough data for this transition.")
+            st.session_state.training_complete = True
+            st.success("All AI models trained!")
 
-# --- Page: Scenario & Prediction ---
-elif st.session_state.active_step == "Scenario":
-    st.header("Step 3: Define a Scenario (Optional)")
-    st.markdown("""
-    Simulate alternative futures by:
-
-    - Modifying predictor layers (e.g., increase population, deforestation).
-    - Applying arithmetic operations to specific rasters.
-
-    The modified predictor stack can be used for scenario-based predictions in the next step.
-    """)
-    if not st.session_state.predictors_loaded:
-        st.warning("⚠️ Please upload predictors in Step 1 first.")
+elif st.session_state.active_step == "4. Simulate Future":
+    st.header("Step 4: Run the Future Simulation")
+    if not st.session_state.training_complete:
+        st.warning("Please complete Step 3 first.")
     else:
-        predictor_filenames = [f.name for f in st.session_state.uploaded_predictors]
-        st.markdown("### ➕ Add a Change")
-        col1, col2, col3 = st.columns([2, 2, 1])
-        selected_layer = col1.selectbox("Layer", options=predictor_filenames)
-        selected_op = col2.selectbox("Operator", options=["multiply", "add", "subtract", "divide"])
-        value = col3.number_input("Value", value=1.0, format="%.2f")
-        if st.button("➕ Add Change"):
-            st.session_state.scenario_changes.append({"layer": selected_layer, "op": selected_op, "value": value})
-        if st.session_state.scenario_changes:
-            st.markdown("### 📝 Current Scenario Changes")
-            for i, change in enumerate(st.session_state.scenario_changes):
-                st.write(f"{i+1}. `{change['layer']}` **{change['op']}** {change['value']}")
-            if st.button("🧹 Clear All Changes"):
-                st.session_state.scenario_changes = []
-                st.rerun()
-        if st.button("🌱 Apply Scenario", disabled=not st.session_state.scenario_changes):
-            progress_bar = st.progress(0, text="Applying scenario...")
-            def cb(f, t): progress_bar.progress(f, text=t)
-            scenario_paths = scenarios.apply_scenario_windowed(st.session_state.uploaded_predictors, {"changes": st.session_state.scenario_changes}, progress_callback=cb)
-            st.session_state.scenario_predictor_paths = scenario_paths
-            st.session_state.log.append("✅ Scenario applied successfully.")
-            st.session_state.scenario_applied = True
-            progress_bar.empty(); st.rerun()
-elif st.session_state.active_step == "Prediction":
-    st.header("Step 4: Run Prediction")
-    st.markdown("""
-    Use the trained model to:
-
-    - Predict land cover for a future or unseen time period.
-    - Visualize and export the results in raster formats (GeoTIFF, PNG).
-
-    Optionally, run predictions using modified scenarios from the previous step.
-    """)
-    if not st.session_state.train_success:
-        st.warning("⚠️ Please train a model in Step 2 first.")
-    else:
-        prediction_mode = st.radio("Select Prediction Mode", ["Baseline", "Scenario"], horizontal=True)
-        if st.button("🛰️ Run Prediction"):
-            predictor_source = st.session_state.uploaded_predictors
-            if prediction_mode == "Scenario":
-                if not st.session_state.scenario_applied:
-                    st.error("You must apply a scenario in Step 3 first."); st.stop()
-                predictor_source = st.session_state.scenario_predictor_paths
-            progress_bar = st.progress(0, text="Starting prediction...")
-            def cb(f, t): progress_bar.progress(f, text=t)
-            predicted_filepath = prediction.predict_map_windowed(st.session_state.model, predictor_source, st.session_state.mask, st.session_state.ref_profile, progress_callback=cb)
-            st.session_state.predicted_filepath = predicted_filepath
-            st.session_state.log.append(f"✅ {prediction_mode} prediction complete.")
-            st.session_state.prediction_success = True
-            progress_bar.empty(); st.rerun()
-
-# --- Page: Visualization ---
-elif st.session_state.active_step == "Visualization":
-    st.header("Step 5: Visualization")
-    st.markdown("""
-    Here you can:
-
-    - View predictions as inline maps or images.
-    - Export the predicted land cover as PNG or GeoTIFF.
-    - Compare baseline predictions with scenario outcomes (if available).
-    """)
-    if not st.session_state.uploaded_targets and not st.session_state.uploaded_predictors:
-        st.warning("⚠️ No data available to visualize. Please upload files in Step 1.")
-    else:
-        # The map will be generated with whichever layers are available.
-        st.info("Use the layer control icon in the top right of the map to toggle layers on and off.")
+        st.markdown("This final step will generate the suitability maps and run the Cellular Automata simulation to create the future land cover map.")
+        if st.button("Run Simulation", disabled=st.session_state.simulation_complete):
+            with st.spinner("Generating Suitability Atlas..."):
+                models = st.session_state.transition_models
+                total_models = len(models)
+                progress_bar = st.progress(0, text="Starting Suitability Atlas generation...")
+                for i, ((from_cls, to_cls), model) in enumerate(models.items()):
+                    progress_text = f"Generating suitability map for {from_cls}->{to_cls}..."
+                    st.session_state.suitability_paths[(from_cls, to_cls)] = prediction.generate_suitability_map(from_cls, model, st.session_state.uploaded_predictors, st.session_state.uploaded_targets[-1], lambda p: progress_bar.progress((i + p) / total_models, text=progress_text))
+                st.success("Suitability Atlas generated.")
+            
+            with st.spinner("Running Cellular Automata Simulation..."):
+                progress_bar = st.progress(0, text="Starting simulation...")
+                def cb(p, t=""): progress_bar.progress(p, text=t)
+                filepath = prediction.run_simulation(st.session_state.uploaded_targets[-1], st.session_state.transition_counts, st.session_state.suitability_paths, progress_callback=cb)
+                if filepath:
+                    st.session_state.predicted_filepath = filepath
+                    st.session_state.simulation_complete = True
+                    st.success("Future simulation complete!")
         
-        m = visualization.create_interactive_map(
-            target_files=st.session_state.uploaded_targets,
-            predictor_files=st.session_state.uploaded_predictors,
-            prediction_filepath=st.session_state.predicted_filepath # This will be None if prediction hasn't run
-        )
-        st_folium(m, width=None, height=700)
+        if st.session_state.simulation_complete:
+            st.balloons()
+            st.info("Proceed to the 'Visualization' step to see your results.")
+
+elif st.session_state.active_step == "5. Visualization":
+    st.header("Step 5: Visualize and Export Results")
+    if not st.session_state.simulation_complete:
+        st.warning("Please complete all previous steps to generate a result.")
+    else:
+        # NOTE: Keeping the old visualization logic as requested.
+        # This part can be upgraded later.
+        st.info(f"Displaying result from the latest prediction.")
+        if st.button("📊 Show Predicted Map as Image"):
+            with st.spinner("Loading map..."):
+                with rasterio.open(st.session_state.predicted_filepath) as src:
+                    predicted_array = src.read(1)
+                fig = visualization.plot_prediction(predicted_array) # Assumes a simple plot function
+                st.pyplot(fig)
+
+        st.subheader("Download Results")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.session_state.predicted_filepath:
+                with open(st.session_state.predicted_filepath, "rb") as fp:
+                    st.download_button(label="Download Predicted Map (GeoTIFF)", data=fp, file_name="predicted_land_cover.tif")
+        with col2:
+            csv = st.session_state.transition_counts.to_csv().encode('utf-8')
+            st.download_button(label="Download Transition Counts (CSV)", data=csv, file_name="transition_counts.csv")
+

@@ -1,114 +1,91 @@
-import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
-import numpy as np
 import streamlit as st
-import seaborn as sns
-import pandas as pd
+import rasterio
+import numpy as np
 import folium
-from io import BytesIO
-import base64
-
-# We need to import the memory-safe file opener from data_loader
+from folium.plugins import MiniMap, LayerControl
+from streamlit_folium import st_folium
+import tempfile
+import os
+import matplotlib.pyplot as plt
+import matplotlib.colors as colors
 from .data_loader import _open_as_raster
 
-def plot_prediction(arr, cmap_list, title):
+def get_raster_bounds(raster_file):
+    """Gets the geographic bounds of a raster file."""
+    with _open_as_raster(raster_file) as src:
+        bounds = src.bounds
+        return [[bounds.bottom, bounds.left], [bounds.top, bounds.right]]
+
+def create_downscaled_png(raster_file, downscale_factor=10):
     """
-    Generate a static plot of a predicted raster.
+    Creates a temporary, downscaled PNG from a raster for visualization.
+    Returns the path to the temporary PNG and the raster's bounds.
     """
-    cmap = ListedColormap(cmap_list)
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.imshow(arr, cmap=cmap, interpolation="nearest")
-    ax.set_title(title)
-    ax.set_axis_off()
-    return fig
+    with _open_as_raster(raster_file) as src:
+        # Calculate new shape
+        new_height = src.height // downscale_factor
+        new_width = src.width // downscale_factor
+        
+        # Read the data, downsampling by slicing
+        data = src.read(1, out_shape=(new_height, new_width), resampling=rasterio.enums.Resampling.nearest)
+        
+        bounds = src.bounds
+        image_bounds = [[bounds.bottom, bounds.left], [bounds.top, bounds.right]]
+        
+        # Create a colormap (can be customized)
+        unique_vals = np.unique(data)
+        cmap = plt.get_cmap('terrain', len(unique_vals))
+        norm = colors.BoundaryNorm(np.arange(len(unique_vals) + 1) - 0.5, len(unique_vals))
+        
+        # Turn off axes and save the image
+        fig, ax = plt.subplots(1, 1, figsize=(new_width/100, new_height/100))
+        ax.imshow(data, cmap=cmap, norm=norm)
+        ax.axis('off')
+        
+        temp_dir = os.environ.get("STREAMLIT_TEMP_DIR", tempfile.gettempdir())
+        temp_png = tempfile.NamedTemporaryFile(suffix=".png", delete=False, dir=temp_dir)
+        fig.savefig(temp_png.name, dpi=100, bbox_inches='tight', pad_inches=0, transparent=True)
+        plt.close(fig)
+        
+        return temp_png.name, image_bounds
 
-def plot_confusion_matrix(cm, class_names):
+def create_interactive_map(target_files=[], prediction_filepath=None):
     """
-    Generates a heatmap figure for a confusion matrix.
+    Creates a folium map with raster layers for targets and prediction.
     """
-    fig, ax = plt.subplots(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='g', ax=ax, cmap='Blues', 
-                xticklabels=class_names, yticklabels=class_names)
-    ax.set_xlabel('Predicted labels')
-    ax.set_ylabel('True labels')
-    ax.set_title('Confusion Matrix')
-    return fig
+    if not target_files:
+        return folium.Map(location=[0, 0], zoom_start=2)
 
-def create_interactive_map(target_files, predictor_files, prediction_filepath):
-    """
-    Creates an interactive folium map with toggleable layers.
-    This version is memory-safe and avoids crashes by downscaling large rasters
-    before displaying them as overlays.
-    """
-    st.info("Generating interactive map... This may take a moment.")
-    
-    m = folium.Map(location=[0, 0], zoom_start=2, tiles="CartoDB positron")
+    # Use the first target to center the map
+    with _open_as_raster(target_files[0]) as src:
+        center_y = (src.bounds.bottom + src.bounds.top) / 2
+        center_x = (src.bounds.left + src.bounds.right) / 2
 
-    def add_raster_as_overlay(file_or_path, layer_name, palette=None):
-        try:
-            with _open_as_raster(file_or_path) as src:
-                bounds = ((src.bounds.bottom, src.bounds.left), (src.bounds.top, src.bounds.right))
-                
-                # --- FIX IS HERE: DOWNSCALING LOGIC ---
-                # Define a maximum dimension for the visualization thumbnail
-                MAX_DIM = 512
-                
-                # Calculate the new shape, preserving aspect ratio
-                if src.height > MAX_DIM or src.width > MAX_DIM:
-                    if src.height > src.width:
-                        new_height = MAX_DIM
-                        new_width = int(src.width * (MAX_DIM / src.height))
-                    else:
-                        new_width = MAX_DIM
-                        new_height = int(src.height * (MAX_DIM / src.width))
-                    
-                    out_shape = (new_height, new_width)
-                else:
-                    out_shape = (src.height, src.width)
+    m = folium.Map(location=[center_y, center_x], zoom_start=8, tiles="CartoDB positron")
 
-                # Read the data, downscaling it on the fly to the new shape
-                data = src.read(1, out_shape=out_shape)
-                # --- END OF FIX ---
+    # Add historical target layers
+    for i, file in enumerate(target_files):
+        png_path, bounds = create_downscaled_png(file)
+        folium.raster_layers.ImageOverlay(
+            image=png_path,
+            bounds=bounds,
+            opacity=0.7,
+            name=f"Historical LC: {file.name}",
+            show=(i == len(target_files) - 1) # Show the latest by default
+        ).add_to(m)
 
-                buffer = BytesIO()
-                cmap = 'viridis' if not palette else ListedColormap(palette)
-                
-                # Normalize for better color mapping if it's a predictor
-                vmin, vmax = (np.nanmin(data), np.nanmax(data)) if not palette else (None, None)
-
-                plt.imsave(buffer, data, cmap=cmap, format='png', vmin=vmin, vmax=vmax)
-                buffer.seek(0)
-                
-                encoded_image = base64.b64encode(buffer.read()).decode('utf-8')
-                image_url = f'data:image/png;base64,{encoded_image}'
-                
-                img_overlay = folium.raster_layers.ImageOverlay(
-                    image=image_url,
-                    bounds=bounds,
-                    opacity=0.7,
-                    name=layer_name,
-                    interactive=True
-                )
-                img_overlay.add_to(m)
-
-        except Exception as e:
-            st.warning(f"Could not display layer '{layer_name}': {e}")
-
-    # Add Prediction Result Layer
+    # Add prediction layer if available
     if prediction_filepath:
-        palette = ["#d9f0d3", "#addd8e", "#31a354", "#006d2c"]
-        add_raster_as_overlay(prediction_filepath, "Prediction Result", palette=palette)
+        png_path, bounds = create_downscaled_png(prediction_filepath)
+        folium.raster_layers.ImageOverlay(
+            image=png_path,
+            bounds=bounds,
+            opacity=0.8,
+            name="Simulated Future Land Cover",
+            show=True
+        ).add_to(m)
 
-    # Add Target Layers
-    if target_files:
-        for file in target_files:
-            add_raster_as_overlay(file, f"Target: {file.name}")
-
-    # Add Predictor Layers
-    if predictor_files:
-        for file in predictor_files:
-            add_raster_as_overlay(file, f"Predictor: {file.name}")
-    
     folium.LayerControl().add_to(m)
-            
+    MiniMap().add_to(m)
+    
     return m
