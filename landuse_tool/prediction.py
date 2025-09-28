@@ -5,14 +5,12 @@ import os
 import joblib
 from contextlib import ExitStack
 from rasterio.windows import Window
-from tqdm import tqdm
 
 from .data_loader import _open_as_raster
 
 def generate_suitability_map(from_class, model, predictor_files, lc_end_file, temp_dir):
     """Generates a probability map for a specific transition."""
-    # Create a temporary file path for the suitability map
-    temp_filepath = os.path.join(temp_dir, f'suitability_{from_class}_to_model_output.tif')
+    temp_filepath = os.path.join(temp_dir, f'suitability_{from_class}.tif')
 
     with _open_as_raster(lc_end_file) as ref_src:
         ref_arr = ref_src.read(1)
@@ -23,7 +21,6 @@ def generate_suitability_map(from_class, model, predictor_files, lc_end_file, te
         from_coords = np.argwhere(from_mask)
         
         if from_coords.size == 0:
-            # No pixels of the source class exist, return an empty map path
             with rasterio.open(temp_filepath, 'w', **profile) as dst:
                 dst.write(np.full(ref_arr.shape, -1.0, dtype='float32'), 1)
             return temp_filepath
@@ -52,30 +49,27 @@ def generate_suitability_map(from_class, model, predictor_files, lc_end_file, te
     return temp_filepath
 
 
-def run_simulation(lc_end_file, predictor_files, transition_counts, trained_model_paths, progress_callback=None):
+def run_simulation(lc_end_file, predictor_files, transition_counts, trained_model_paths, temp_dir, progress_callback=None):
     """
-    This version accepts a dictionary of model file paths, loads them on the fly,
-    and runs the full simulation.
+    Runs the full simulation: generates suitability maps and allocates change.
     """
     if progress_callback is None:
         def progress_callback(p, t): pass
 
     try:
-        temp_dir = tempfile.mkdtemp()
         suitability_paths = {}
-        
-        significant_transitions = [k for k, v in trained_model_paths.items()]
-        
-        progress_callback(0.0, "Starting suitability map generation...")
+        significant_transitions = list(trained_model_paths.keys())
         
         # STAGE 2: Generate Suitability Atlas
+        total_models = len(significant_transitions)
         for i, (from_cls, to_cls) in enumerate(significant_transitions):
-            progress_callback(i / len(significant_transitions), f"Generating suitability for {from_cls} -> {to_cls}...")
+            # Detailed progress update for the UI
+            progress_text = f"Generating suitability map for {from_cls} -> {to_cls} ({i+1}/{total_models})"
+            progress_callback(i / total_models, progress_text)
             
             model_path = trained_model_paths.get((from_cls, to_cls))
             if not model_path: continue
-
-            # Load the model just in time
+            
             model = joblib.load(model_path)
             
             suitability_map_path = generate_suitability_map(
@@ -120,7 +114,6 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
             rows, cols = coords_to_change.T
             future_lc[rows, cols] = to_cls
         
-        # Save final result
         output_path = os.path.join(temp_dir, "predicted_land_cover.tif")
         with rasterio.open(output_path, 'w', **profile) as dst:
             dst.write(future_lc, 1)
@@ -129,6 +122,5 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
         return output_path
 
     except Exception as e:
-        # A simple error handler to provide more context in the Streamlit app
         raise Exception(f"An error occurred during simulation: {e}")
 
