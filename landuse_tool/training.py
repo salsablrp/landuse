@@ -4,7 +4,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from contextlib import ExitStack
 from rasterio.windows import Window
-from tqdm import tqdm
 
 from .data_loader import _open_as_raster
 
@@ -22,10 +21,9 @@ def create_transition_dataset(from_cls, to_cls, lc_start_file, lc_end_file, pred
         negative_coords = np.argwhere(negative_mask)
         
         n_samples = min(len(positive_coords), len(negative_coords))
-        if n_samples < 10:  # Not enough data to train a meaningful model
+        if n_samples < 10:
             return None, None
             
-        # To avoid memory issues with very large transitions, we cap the samples
         max_samples = 50000 
         n_samples = min(n_samples, max_samples)
 
@@ -36,6 +34,7 @@ def create_transition_dataset(from_cls, to_cls, lc_start_file, lc_end_file, pred
         y = np.array([1] * n_samples + [0] * n_samples)
         
         X = []
+        # predictor_files can now be a mix of UploadedFile objects and string paths
         with ExitStack() as stack:
             predictors = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
             for r, c in all_coords:
@@ -43,8 +42,7 @@ def create_transition_dataset(from_cls, to_cls, lc_start_file, lc_end_file, pred
                 X.append(pixel_values)
                 
         return np.array(X), y
-    except Exception as e:
-        # st.error(f"Failed to create dataset for {from_cls}->{to_cls}: {e}")
+    except Exception:
         return None, None
 
 
@@ -59,7 +57,6 @@ def train_rf_model(X, y):
         model.fit(X_train, y_train)
         accuracy = model.score(X_test, y_test)
         return model, accuracy
-    except Exception as e:
-        # st.error(f"Model training failed: {e}")
+    except Exception:
         return None, 0
 
