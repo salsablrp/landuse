@@ -1,89 +1,52 @@
-import operator
 import rasterio
+import numpy as np
 from rasterio.windows import Window
-import tempfile
-import streamlit as st
-from tqdm import tqdm
+from scipy.ndimage import uniform_filter
 
-# --- Import the memory-safe file opener from data_loader ---
-from .data_loader import _open_as_raster
-
-# Define allowed operators
-OPS = {
-    "multiply": operator.mul,
-    "add": operator.add,
-    "subtract": operator.sub,
-    "divide": operator.truediv,
-}
-
-def apply_scenario_windowed(predictor_files, scenario_def, progress_callback=None):
+def create_neighborhood_predictors(predictor_files, lc_end_file, radius_pixels, temp_dir):
     """
-    Apply a user-defined scenario to predictor files in a memory-safe,
-    windowed manner, creating a new set of temporary raster files.
+    Generates new predictor rasters based on neighborhood statistics.
+    
+    Args:
+        predictor_files (list): List of file-like objects for original predictors.
+        lc_end_file (file-like): The most recent land cover map.
+        radius_pixels (int): The radius of the neighborhood in pixels.
+        temp_dir (str): Path to the temporary directory.
 
-    Parameters
-    ----------
-    predictor_files : list of UploadedFile
-        List of original predictor file objects from Streamlit.
-    scenario_def : dict
-        Scenario definition with a list of changes.
-    progress_callback : function, optional
-        A function to report progress to the Streamlit frontend.
-
-    Returns
-    -------
-    list of str
-        A list of file paths to the new temporary scenario rasters.
+    Returns:
+        list: A list of file paths to the new neighborhood predictor rasters.
     """
+    new_predictor_paths = []
     
-    scenario_filepaths = []
-    
-    # Create a lookup dictionary for quick access to changes
-    changes_map = {change["layer"]: change for change in scenario_def.get("changes", [])}
+    # Use a set to avoid duplicating neighborhood calculations for the same base predictor
+    # This might happen if user uploads same file twice by mistake
+    processed_files = set()
 
-    total_files = len(predictor_files)
-    for i, p_file in enumerate(predictor_files):
+    for predictor_file in predictor_files:
+        if predictor_file.name in processed_files:
+            continue
         
-        if progress_callback:
-            progress_fraction = (i + 1) / total_files
-            progress_callback(progress_fraction, f"Processing {p_file.name}...")
-
-        # Open the original predictor to get its profile
-        with _open_as_raster(p_file) as src:
+        # We need to read the file to a temporary path to process it
+        # This uses the same memory-safe approach as the data_loader
+        from .data_loader import _open_as_raster
+        with _open_as_raster(predictor_file) as src:
             profile = src.profile
+            profile.update(dtype='float32')
+            arr = src.read(1, out_dtype='float32')
+
+            # Calculate mean in neighborhood using a uniform filter (fast)
+            # The size of the filter is (radius * 2 + 1)
+            filter_size = int(radius_pixels * 2 + 1)
+            neighborhood_mean = uniform_filter(arr, size=filter_size, mode='reflect')
+
+            # Save the new raster to a temporary file
+            output_filename = f"neighborhood_mean_{predictor_file.name}"
+            output_path = f"{temp_dir}/{output_filename}"
+
+            with rasterio.open(output_path, 'w', **profile) as dst:
+                dst.write(neighborhood_mean, 1)
+
+            new_predictor_paths.append(output_path)
+            processed_files.add(predictor_file.name)
             
-            # Create a new temporary file for the scenario output
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".tif", dir="/tmp")
-            scenario_filepaths.append(temp_file.name)
-            temp_file.close()
-
-            # Open the new temp file in write mode
-            with rasterio.open(temp_file.name, 'w', **profile) as dst:
-                # Process the raster window by window
-                for _, window in src.block_windows(1):
-                    original_data = src.read(1, window=window)
-                    
-                    # Check if a change needs to be applied to this layer
-                    if p_file.name in changes_map:
-                        change = changes_map[p_file.name]
-                        op_name = change["op"]
-                        value = change["value"]
-                        
-                        if op_name in OPS:
-                            func = OPS[op_name]
-                            # Apply the operation
-                            modified_data = func(original_data, value)
-                        else:
-                            # If operator is invalid, just use original data
-                            modified_data = original_data
-                    else:
-                        # No changes for this layer, just copy the data
-                        modified_data = original_data
-                    
-                    # Write the (potentially modified) data to the new file
-                    dst.write(modified_data, 1, window=window)
-
-    if progress_callback:
-        progress_callback(1.0, "Scenario files created successfully!")
-        
-    return scenario_filepaths
+    return new_predictor_paths
