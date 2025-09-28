@@ -2,7 +2,8 @@ import streamlit as st
 import rasterio
 import numpy as np
 import folium
-from folium.plugins import MiniMap, LayerControl
+from folium import LayerControl
+from folium.plugins import MiniMap
 from streamlit_folium import st_folium
 import tempfile
 import os
