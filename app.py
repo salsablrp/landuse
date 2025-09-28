@@ -5,7 +5,7 @@ import joblib
 import tempfile
 from streamlit_folium import st_folium
 
-from landuse_tool import data_loader, change_analysis, training, prediction, visualization
+from landuse_tool import data_loader, change_analysis, training, prediction, visualization, scenarios
 
 # --- Page Configuration and Initialization ---
 st.set_page_config(page_title="Hybrid AI LUC Modeler", page_icon="🌍", layout="wide")
@@ -18,7 +18,8 @@ def init_state():
         "analysis_complete": False, "training_complete": False, "simulation_complete": False,
         "uploaded_targets_with_years": [], "uploaded_predictors": [],
         "model_paths": {}, "predicted_filepath": None,
-        "transition_matrix": None, "transition_counts": None, "class_legends": pd.DataFrame()
+        "transition_matrix": None, "transition_counts": None, "class_legends": pd.DataFrame(),
+        "use_spatially_aware_ai": False, "neighborhood_radius": 5
     }
     for k, v in defaults.items():
         if k not in st.session_state: st.session_state[k] = v
@@ -40,11 +41,10 @@ with st.sidebar:
 if st.session_state.active_step == "Home":
     st.header("👋 Welcome to the Next-Generation Land Use Modeler")
     st.markdown("This tool implements a state-of-the-art, three-stage simulation to forecast land use change. It combines statistical trend analysis with a powerful, AI-native suitability engine to create plausible future scenarios.")
-    st.info("To explore advanced features like non-linear trends, policy scenarios, and dynamic neighborhood predictors, please see the project roadmap.")
 
 elif st.session_state.active_step == "1. Data Input":
     st.header("Step 1: Upload Your Geospatial Data")
-    st.info("Please upload your data. For the tool to work correctly, all rasters must have the same dimensions, projection, and pixel size.")
+    st.info("Please upload your data. All rasters must have the same dimensions, projection, and pixel size.")
     
     st.subheader("1a. Upload Historical Land Cover Maps (≥2)")
     uploaded_targets = st.file_uploader("Upload GeoTIFF files for land cover", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
@@ -81,7 +81,6 @@ elif st.session_state.active_step == "2. Analyze Change":
     st.header("Step 2: Quantify Historical Change")
     if not st.session_state.predictors_loaded: st.warning("Please complete Step 1 first.")
     else:
-        # Determine analysis mode based on number of uploaded targets
         num_targets = len(st.session_state.uploaded_targets_with_years)
         analysis_mode = "Non-Linear (Most Recent Trend)" if num_targets > 2 else "Linear (Overall Trend)"
         st.subheader(f"Analysis Mode: {analysis_mode}")
@@ -93,21 +92,17 @@ elif st.session_state.active_step == "2. Analyze Change":
                     matrix, counts = change_analysis.analyze_non_linear_trends(targets_with_years)
                 else:
                     matrix, counts = change_analysis.calculate_transition_matrix(targets_with_years[0]['file'], targets_with_years[-1]['file'])
-
-                if matrix is not None and counts is not None:
+                if matrix is not None:
                     st.session_state.transition_matrix, st.session_state.transition_counts = matrix, counts
                     st.session_state.analysis_complete = True
-                    # Initialize class legends editor
                     class_ids = counts.index.tolist()
                     st.session_state.class_legends = pd.DataFrame({'Class Name': [f'Class {i}' for i in class_ids]}, index=class_ids)
                     st.success("Change analysis complete!")
         
         if st.session_state.analysis_complete:
             st.subheader("Define Land Cover Class Names")
-            st.info("Edit the names in the 'Class Name' column below. This will be used for legends.")
             edited_legends = st.data_editor(st.session_state.class_legends, use_container_width=True)
-            st.session_state.class_legends = edited_legends # Save edits
-            
+            st.session_state.class_legends = edited_legends
             st.subheader("Transition Pixel Counts")
             st.dataframe(st.session_state.transition_counts.style.background_gradient(cmap='viridis'))
 
@@ -116,10 +111,22 @@ elif st.session_state.active_step == "3. Train AI":
     st.header("Step 3: Train AI Suitability Models")
     if not st.session_state.analysis_complete: st.warning("Please complete Step 2 first.")
     else:
-        st.markdown("The tool will train an AI model for each significant historical transition.")
+        st.markdown("Train AI models for each significant transition. Enable advanced options for more accurate spatial patterns.")
+        
+        with st.expander("Advanced AI Options"):
+            st.session_state.use_spatially_aware_ai = st.checkbox("Enable Spatially-Aware AI (Neighborhood Effects)", value=st.session_state.use_spatially_aware_ai)
+            if st.session_state.use_spatially_aware_ai:
+                st.session_state.neighborhood_radius = st.number_input("Neighborhood Radius (in pixels)", min_value=1, value=st.session_state.neighborhood_radius, help="A larger radius considers more spatial context but is slower.")
+
         threshold = st.number_input("Minimum pixels for a transition to be 'significant'", min_value=1, value=100)
         
         if st.button("Train All Models", disabled=st.session_state.training_complete):
+            predictor_files_for_training = st.session_state.uploaded_predictors
+            if st.session_state.use_spatially_aware_ai:
+                with st.spinner("Generating neighborhood predictors... This may take time."):
+                    neighborhood_predictors = scenarios.create_neighborhood_predictors(st.session_state.uploaded_predictors, st.session_state.uploaded_targets_with_years[-1]['file'], st.session_state.neighborhood_radius, st.session_state.temp_dir)
+                    predictor_files_for_training += neighborhood_predictors
+            
             counts = st.session_state.transition_counts
             transitions = counts[counts > threshold].stack().index.tolist()
             
@@ -127,7 +134,7 @@ elif st.session_state.active_step == "3. Train AI":
             for from_cls, to_cls in transitions:
                 if from_cls == to_cls: continue
                 status.update(label=f"Training model for transition: {from_cls} -> {to_cls}")
-                X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], st.session_state.uploaded_predictors)
+                X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], predictor_files_for_training)
                 if X is not None:
                     model, acc = training.train_rf_model(X, y)
                     if model:
@@ -138,25 +145,36 @@ elif st.session_state.active_step == "3. Train AI":
             status.update(label="All AI models trained!", state="complete")
             st.session_state.training_complete = True
 
-
 elif st.session_state.active_step == "4. Simulate Future":
     st.header("Step 4: Simulate Future Land Cover")
     if not st.session_state.training_complete: st.warning("⚠️ Please train AI models in Step 3 first.")
     else:
-        st.markdown("This final modeling step uses a Cellular Automata to allocate the projected change across the landscape.")
-        st.info("Note: The advanced features for Policy Demands, Stochastic Allocation, and Neighborhood Effects are part of the future development roadmap.")
+        st.subheader("Scenario & Simulation Options")
         
+        # Policy Demand Override
+        with st.expander("Override Historical Demand (Policy Simulation)"):
+            st.info("Here you can manually edit the number of pixels projected to change for each transition, simulating policy targets.")
+            edited_counts = st.data_editor(st.session_state.transition_counts, use_container_width=True)
+        
+        # Stochastic Allocation
+        use_stochastic = st.checkbox("Enable Stochastic Allocation", help="Introduces randomness for sensitivity analysis. Each run will be slightly different.")
+
         if st.button("🛰️ Run Simulation", disabled=st.session_state.simulation_complete):
             status = st.status("Starting simulation...", expanded=True)
             def cb(p, t): status.update(label=t)
             
             targets = st.session_state.uploaded_targets_with_years
+            
+            # Use the edited counts from the policy editor for the simulation
+            final_transition_counts = edited_counts
+            
             future_lc_path = prediction.run_simulation(
                 lc_end_file=targets[-1]['file'],
-                predictor_files=st.session_state.uploaded_predictors,
-                transition_counts=st.session_state.transition_counts,
+                predictor_files=st.session_state.uploaded_predictors, # Use original predictors for simulation
+                transition_counts=final_transition_counts,
                 trained_model_paths=st.session_state.model_paths,
                 temp_dir=st.session_state.temp_dir,
+                stochastic=use_stochastic,
                 progress_callback=cb
             )
             st.session_state.predicted_filepath = future_lc_path
