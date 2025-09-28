@@ -1,95 +1,113 @@
 import rasterio
 import numpy as np
-import streamlit as st
-from contextlib import ExitStack
-from rasterio.windows import Window
 import tempfile
 import os
+import joblib
+from contextlib import ExitStack
+from rasterio.windows import Window
+from tqdm import tqdm
+
 from .data_loader import _open_as_raster
 
-def generate_suitability_map(from_class, model, predictor_files, ref_lc_file, progress_callback=None):
+def generate_suitability_map(from_class, model, predictor_files, lc_end_file, temp_dir):
+    """Generates a probability map for a specific transition."""
+    # Create a temporary file path for the suitability map
+    temp_filepath = os.path.join(temp_dir, f'suitability_{from_class}_to_model_output.tif')
+
+    with _open_as_raster(lc_end_file) as ref_src:
+        ref_arr = ref_src.read(1)
+        profile = ref_src.profile
+        profile.update(dtype='float32', count=1, nodata=-1.0)
+        
+        from_mask = (ref_arr == from_class)
+        from_coords = np.argwhere(from_mask)
+        
+        if from_coords.size == 0:
+            # No pixels of the source class exist, return an empty map path
+            with rasterio.open(temp_filepath, 'w', **profile) as dst:
+                dst.write(np.full(ref_arr.shape, -1.0, dtype='float32'), 1)
+            return temp_filepath
+
+        suitability_map = np.full(ref_arr.shape, -1.0, dtype='float32')
+
+    batch_size = 50000
+    with ExitStack() as stack:
+        predictors = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
+        for i in range(0, len(from_coords), batch_size):
+            batch_coords = from_coords[i:i+batch_size]
+            
+            X_batch = []
+            for r, c in batch_coords:
+                pixel_values = [p_src.read(1, window=Window(c, r, 1, 1))[0, 0] for p_src in predictors]
+                X_batch.append(pixel_values)
+                
+            if X_batch:
+                probs = model.predict_proba(np.array(X_batch))[:, 1]
+                rows, cols = batch_coords.T
+                suitability_map[rows, cols] = probs
+            
+    with rasterio.open(temp_filepath, 'w', **profile) as dst:
+        dst.write(suitability_map, 1)
+
+    return temp_filepath
+
+
+def run_simulation(lc_end_file, predictor_files, transition_counts, trained_model_paths, progress_callback=None):
     """
-    Generates a probability map (0.0 to 1.0) for a specific transition.
+    This version accepts a dictionary of model file paths, loads them on the fly,
+    and runs the full simulation.
     """
-    temp_dir = os.environ.get("STREAMLIT_TEMP_DIR", tempfile.gettempdir())
-    temp_file = tempfile.NamedTemporaryFile(suffix=".tif", delete=False, dir=temp_dir)
-    output_path = temp_file.name
-    temp_file.close()
+    if progress_callback is None:
+        def progress_callback(p, t): pass
 
     try:
-        with _open_as_raster(ref_lc_file) as ref_src:
-            profile = ref_src.profile
-            profile.update(dtype='float32', count=1, compress='lzw')
+        temp_dir = tempfile.mkdtemp()
+        suitability_paths = {}
+        
+        significant_transitions = [k for k, v in trained_model_paths.items()]
+        
+        progress_callback(0.0, "Starting suitability map generation...")
+        
+        # STAGE 2: Generate Suitability Atlas
+        for i, (from_cls, to_cls) in enumerate(significant_transitions):
+            progress_callback(i / len(significant_transitions), f"Generating suitability for {from_cls} -> {to_cls}...")
             
-            from_mask = (ref_src.read(1) == from_class)
-            from_coords = np.argwhere(from_mask)
+            model_path = trained_model_paths.get((from_cls, to_cls))
+            if not model_path: continue
+
+            # Load the model just in time
+            model = joblib.load(model_path)
             
-            if len(from_coords) == 0:
-                return None # No source pixels left to analyze
+            suitability_map_path = generate_suitability_map(
+                from_class=from_cls,
+                model=model,
+                predictor_files=predictor_files,
+                lc_end_file=lc_end_file,
+                temp_dir=temp_dir
+            )
+            suitability_paths[(from_cls, to_cls)] = suitability_map_path
 
-            suitability_map = np.full(from_mask.shape, -1.0, dtype='float32')
+        progress_callback(1.0, "Suitability atlas complete. Starting simulation...")
 
-        batch_size = 50000
-        total_batches = (len(from_coords) + batch_size - 1) // batch_size
-
-        with ExitStack() as stack:
-            predictors = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
-            for i in range(total_batches):
-                start_idx = i * batch_size
-                end_idx = start_idx + batch_size
-                batch_coords = from_coords[start_idx:end_idx]
-                
-                X_batch = [ [src.read(1, window=Window(c, r, 1, 1))[0, 0] for src in predictors] for r, c in batch_coords ]
-                
-                if X_batch:
-                    probs = model.predict_proba(X_batch)[:, 1]
-                    rows, cols = batch_coords.T
-                    suitability_map[rows, cols] = probs
-                
-                if progress_callback:
-                    progress_callback(float(i + 1) / total_batches)
-
-        with rasterio.open(output_path, 'w', **profile) as dst:
-            dst.write(suitability_map, 1)
-
-        return output_path
-
-    except Exception as e:
-        st.error(f"Failed to generate suitability map for class {from_class}: {e}")
-        return None
-
-def run_simulation(lc_end_file, transition_counts, suitability_paths, progress_callback=None):
-    """
-    Runs the Cellular Automata simulation to generate a future land cover map.
-    """
-    temp_dir = os.environ.get("STREAMLIT_TEMP_DIR", tempfile.gettempdir())
-    temp_file = tempfile.NamedTemporaryFile(suffix=".tif", delete=False, dir=temp_dir)
-    output_path = temp_file.name
-    temp_file.close()
-    
-    try:
+        # STAGE 3: Cellular Automata Simulation
         with _open_as_raster(lc_end_file) as src:
             future_lc = src.read(1)
             profile = src.profile
-
+        
         sorted_transitions = transition_counts.stack().sort_values(ascending=False).index.tolist()
         
-        total_transitions = len(sorted_transitions)
-        for i, (from_cls, to_cls) in enumerate(sorted_transitions):
+        for from_cls, to_cls in sorted_transitions:
             if from_cls == to_cls: continue
-                
+            
             demand = int(transition_counts.loc[from_cls, to_cls])
             if demand == 0: continue
             
-            if progress_callback:
-                progress_callback(float(i) / total_transitions, f"Simulating: {from_cls} -> {to_cls}...")
-
             suitability_path = suitability_paths.get((from_cls, to_cls))
             if not suitability_path: continue
             
-            with _open_as_raster(suitability_path) as src:
+            with rasterio.open(suitability_path) as src:
                 suitability_map = src.read(1)
-                
+            
             available_mask = (future_lc == from_cls)
             available_scores = suitability_map[available_mask]
             available_coords = np.argwhere(available_mask)
@@ -101,15 +119,16 @@ def run_simulation(lc_end_file, transition_counts, suitability_paths, progress_c
             coords_to_change = available_coords[top_indices]
             rows, cols = coords_to_change.T
             future_lc[rows, cols] = to_cls
-            
+        
+        # Save final result
+        output_path = os.path.join(temp_dir, "predicted_land_cover.tif")
         with rasterio.open(output_path, 'w', **profile) as dst:
             dst.write(future_lc, 1)
-
-        if progress_callback:
-            progress_callback(1.0, "Simulation complete!")
-
+        
+        progress_callback(1.0, "Simulation complete!")
         return output_path
+
     except Exception as e:
-        st.error(f"Simulation failed: {e}")
-        return None
+        # A simple error handler to provide more context in the Streamlit app
+        raise Exception(f"An error occurred during simulation: {e}")
 
