@@ -1,6 +1,8 @@
 import streamlit as st
 import os
 import pandas as pd
+import joblib
+import tempfile
 
 from landuse_tool import data_loader, change_analysis, training, prediction, visualization
 
@@ -19,9 +21,13 @@ if "active_step" not in st.session_state:
     st.session_state.simulation_complete = False
     st.session_state.uploaded_targets = []
     st.session_state.uploaded_predictors = []
-    st.session_state.transition_models = {}
+    # MODIFIED: Store model paths, not model objects
+    st.session_state.model_paths = {}
     st.session_state.suitability_paths = {}
     st.session_state.predicted_filepath = None
+    # Create a single temporary directory for the session
+    st.session_state.temp_dir = tempfile.mkdtemp()
+
 
 # --- Sidebar ---
 with st.sidebar:
@@ -123,7 +129,11 @@ elif st.session_state.active_step == "3. Train AI":
                         with st.spinner(f"Training model..."):
                             model, acc = training.train_rf_model(X, y)
                         if model:
-                            st.session_state.transition_models[(from_cls, to_cls)] = model
+                            # MODIFIED: Save model to disk and store the path
+                            model_filename = f"model_{from_cls}_to_{to_cls}.joblib"
+                            model_path = os.path.join(st.session_state.temp_dir, model_filename)
+                            joblib.dump(model, model_path)
+                            st.session_state.model_paths[(from_cls, to_cls)] = model_path
                             st.write(f"✅ Model trained. Accuracy: {acc:.2%}")
                     else:
                         st.write("Skipped: Not enough data for this transition.")
@@ -140,11 +150,12 @@ elif st.session_state.active_step == "4. Simulate Future":
             progress_bar = st.progress(0, text="Generating suitability atlas...")
             def cb(p, t): progress_bar.progress(p, text=t)
 
+            # MODIFIED: Pass the dictionary of model paths, not model objects
             future_lc_path = prediction.run_simulation(
                 lc_end_file=st.session_state.uploaded_targets[-1],
                 predictor_files=st.session_state.uploaded_predictors,
                 transition_counts=st.session_state.transition_counts,
-                trained_models=st.session_state.transition_models,
+                trained_model_paths=st.session_state.model_paths,
                 progress_callback=cb
             )
             st.session_state.predicted_filepath = future_lc_path
@@ -157,14 +168,10 @@ elif st.session_state.active_step == "5. Visualization":
     if not st.session_state.simulation_complete:
         st.warning("Please complete all previous steps to generate a result.")
     else:
-        # NOTE: Keeping the old visualization logic as requested.
-        # This part can be upgraded later.
         st.info(f"Displaying result from the latest prediction.")
         if st.button("📊 Show Predicted Map as Image"):
             with st.spinner("Loading map..."):
-                with rasterio.open(st.session_state.predicted_filepath) as src:
-                    predicted_array = src.read(1)
-                fig = visualization.plot_prediction(predicted_array) # Assumes a simple plot function
+                fig = visualization.plot_prediction_from_path(st.session_state.predicted_filepath)
                 st.pyplot(fig)
 
         st.subheader("Download Results")
@@ -174,6 +181,7 @@ elif st.session_state.active_step == "5. Visualization":
                 with open(st.session_state.predicted_filepath, "rb") as fp:
                     st.download_button(label="Download Predicted Map (GeoTIFF)", data=fp, file_name="predicted_land_cover.tif")
         with col2:
-            csv = st.session_state.transition_counts.to_csv().encode('utf-8')
-            st.download_button(label="Download Transition Counts (CSV)", data=csv, file_name="transition_counts.csv")
+            if 'transition_counts' in st.session_state and st.session_state.transition_counts is not None:
+                csv = st.session_state.transition_counts.to_csv().encode('utf-8')
+                st.download_button(label="Download Transition Counts (CSV)", data=csv, file_name="transition_counts.csv")
 
