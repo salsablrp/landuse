@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import joblib
 import tempfile
+from streamlit_folium import st_folium
 
 from landuse_tool import data_loader, change_analysis, training, prediction, visualization
 
