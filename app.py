@@ -21,6 +21,7 @@ if "active_step" not in st.session_state:
     st.session_state.uploaded_predictors = []
     st.session_state.transition_models = {}
     st.session_state.suitability_paths = {}
+    st.session_state.predicted_filepath = None
 
 # --- Sidebar ---
 with st.sidebar:
@@ -135,7 +136,7 @@ elif st.session_state.active_step == "4. Simulate Future":
     if not st.session_state.training_complete:
         st.warning("⚠️ Please train the AI models in Step 3 first.")
     else:
-        if st.button("🛰️ Run Simulation", disabled=st.session_state.simulation_success):
+        if st.button("🛰️ Run Simulation", disabled=st.session_state.simulation_complete):
             progress_bar = st.progress(0, text="Generating suitability atlas...")
             def cb(p, t): progress_bar.progress(p, text=t)
 
@@ -143,12 +144,12 @@ elif st.session_state.active_step == "4. Simulate Future":
                 lc_end_file=st.session_state.uploaded_targets[-1],
                 predictor_files=st.session_state.uploaded_predictors,
                 transition_counts=st.session_state.transition_counts,
-                trained_models=st.session_state.trained_models,
+                trained_models=st.session_state.transition_models,
                 progress_callback=cb
             )
             st.session_state.predicted_filepath = future_lc_path
-            st.session_state.simulation_success = True
-            st.session_state.log.append("✅ Simulation complete.")
+            st.session_state.simulation_complete = True
+            st.success("✅ Simulation complete.")
             progress_bar.empty()
 
 elif st.session_state.active_step == "5. Visualization":
