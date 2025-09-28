@@ -163,16 +163,18 @@ elif st.session_state.active_step == "4. Simulate Future":
             st.success("✅ Simulation complete.")
             progress_bar.empty()
 
+
 elif st.session_state.active_step == "5. Visualization":
     st.header("Step 5: Visualize and Export Results")
     if not st.session_state.simulation_complete:
         st.warning("Please complete all previous steps to generate a result.")
     else:
-        st.info(f"Displaying result from the latest prediction.")
-        if st.button("📊 Show Predicted Map as Image"):
-            with st.spinner("Loading map..."):
-                fig = visualization.plot_prediction_from_path(st.session_state.predicted_filepath)
-                st.pyplot(fig)
+        st.info(f"Displaying interactive map of the latest prediction.")
+        with st.spinner("Generating and loading map... This may take a moment for large files."):
+            # MODIFIED: Call the new interactive map function
+            m = visualization.create_interactive_map(st.session_state.predicted_filepath)
+            # MODIFIED: Use st_folium to render the map
+            st_folium(m, width=None, height=700)
 
         st.subheader("Download Results")
         col1, col2 = st.columns(2)
@@ -184,4 +186,3 @@ elif st.session_state.active_step == "5. Visualization":
             if 'transition_counts' in st.session_state and st.session_state.transition_counts is not None:
                 csv = st.session_state.transition_counts.to_csv().encode('utf-8')
                 st.download_button(label="Download Transition Counts (CSV)", data=csv, file_name="transition_counts.csv")
-
