@@ -6,6 +6,7 @@ from PIL import Image
 import io
 import base64
 from streamlit_folium import st_folium
+import matplotlib.pyplot as plt
 
 def plot_prediction_from_path(filepath):
     """
