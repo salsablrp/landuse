@@ -505,7 +505,6 @@ elif st.session_state.active_step == "Visualization":
             
             st_folium(m, width=None, height=700)
 
-        st.subheader("Download Results")
         if st.session_state.simulation_complete and st.session_state.predicted_filepath:
             st.divider()
             st.subheader("Download Center")
