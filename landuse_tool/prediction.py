@@ -46,96 +46,91 @@ def generate_suitability_map(from_class, model_path, predictor_files, lc_end_fil
     return temp_filepath
 
 def run_simulation(lc_end_file, predictor_files, transition_counts, trained_model_paths, temp_dir, stochastic=False, progress_callback=None):
+    """
+    Runs the full simulation using a memory-safe, windowed approach for allocation.
+    """
     if progress_callback is None:
-        def progress_callback(p, t):
-            pass
-            
+        def progress_callback(p, t): pass
+
     try:
+        # --- STAGE 2: Generate Suitability Atlas (This part is already memory-safe) ---
         suitability_paths = {}
-        growth_mode = any(len(k) == 3 for k in trained_model_paths.keys())
+        transitions_to_model = list(trained_model_paths.keys())
+        total_suitability_maps = len(transitions_to_model)
+        for i, key in enumerate(transitions_to_model):
+            progress_callback(i / (total_suitability_maps + 1), f"Generating suitability map {i+1}/{total_suitability_maps}")
+            model_path = trained_model_paths.get(key)
+            from_cls = key[0]
+            model_type = key[2] if len(key) == 3 else ''
+            if model_path:
+                suitability_paths[key] = generate_suitability_map(from_cls, model_path, predictor_files, lc_end_file, temp_dir, model_type)
 
-        # --- THIS IS THE CORRECTED LOGIC ---
-        # It now correctly creates a set of unique (from_cls, to_cls) pairs,
-        # regardless of whether the original keys have 2 or 3 elements.
-        if growth_mode:
-            transitions_to_model = set((k[0], k[1]) for k in trained_model_paths.keys())
-        else:
-            transitions_to_model = set(trained_model_paths.keys())
+        progress_callback(total_suitability_maps / (total_suitability_maps + 1), "Suitability atlas complete. Starting final allocation...")
 
-        total_models = len(trained_model_paths)
-        i = 0
-        for from_cls, to_cls in transitions_to_model:
-            if growth_mode:
-                for mode in ['expander', 'patcher']:
-                    i += 1
-                    progress_callback(i / total_models, f"Generating {mode} map for {from_cls}->{to_cls}")
-                    model_path = trained_model_paths.get((from_cls, to_cls, mode))
-                    if model_path:
-                        suitability_paths[(from_cls, to_cls, mode)] = generate_suitability_map(from_cls, model_path, predictor_files, lc_end_file, temp_dir, mode)
-            else:
-                i += 1
-                progress_callback(i / total_models, f"Generating suitability map for {from_cls}->{to_cls}")
-                model_path = trained_model_paths.get((from_cls, to_cls))
-                if model_path:
-                    suitability_paths[(from_cls, to_cls)] = generate_suitability_map(from_cls, model_path, predictor_files, lc_end_file, temp_dir)
-
-        progress_callback(1.0, "Suitability atlas complete. Starting simulation...")
-
+        # --- STAGE 3: Windowed Cellular Automata Simulation ---
         with _open_as_raster(lc_end_file) as src:
-            future_lc = src.read(1); profile = src.profile
-        
+            profile = src.profile
+            output_path = os.path.join(temp_dir, "predicted_land_cover.tif")
+            # Copy the latest LC map to the output file to serve as the base
+            with rasterio.open(output_path, 'w', **profile) as dst:
+                for _, window in src.block_windows(1):
+                    dst.write(src.read(1, window=window), 1, window=window)
+
         sorted_transitions = transition_counts.stack().sort_values(ascending=False).index.tolist()
         
-        for from_cls, to_cls in sorted_transitions:
-            if from_cls == to_cls: continue
-            demand = int(transition_counts.loc[from_cls, to_cls])
-            if demand <= 0: continue
-
-            if growth_mode:
-                exp_path = suitability_paths.get((from_cls, to_cls, 'expander'))
-                pat_path = suitability_paths.get((from_cls, to_cls, 'patcher'))
-                if not exp_path or not pat_path: continue
-
-                with rasterio.open(exp_path) as exp_src, rasterio.open(pat_path) as pat_src:
-                    exp_suit = exp_src.read(1)
-                    pat_suit = pat_src.read(1)
-
-                to_class_mask = (future_lc == to_cls)
-                dilated_mask = binary_dilation(to_class_mask, structure=np.ones((3,3)))
-                suitability_map = np.where(dilated_mask, exp_suit, pat_suit)
-            else:
-                suitability_path = suitability_paths.get((from_cls, to_cls))
-                if not suitability_path: continue
-                with rasterio.open(suitability_path) as src: suitability_map = src.read(1)
-
-            available_mask = (future_lc == from_cls)
-            available_scores = suitability_map[available_mask]
-            available_coords = np.argwhere(available_mask)
-            num_to_change = min(demand, len(available_scores))
-            if num_to_change <= 0: del suitability_map; gc.collect(); continue
+        with ExitStack() as stack:
+            suitability_sources = {key: stack.enter_context(rasterio.open(path)) for key, path in suitability_paths.items() if path and os.path.exists(path)}
             
-            if stochastic:
-                scores_sum = np.sum(available_scores)
-                if scores_sum > 0:
-                    probabilities = available_scores / scores_sum
-                    probabilities /= np.sum(probabilities)
-                    chosen_indices = np.random.choice(len(available_coords), size=num_to_change, replace=False, p=probabilities)
-                else:
-                    chosen_indices = np.argpartition(available_scores, -num_to_change)[-num_to_change:]
-            else:
-                chosen_indices = np.argpartition(available_scores, -num_to_change)[-num_to_change:]
+            with rasterio.open(output_path, 'r+') as future_lc_src:
+                for from_cls, to_cls in sorted_transitions:
+                    if from_cls == to_cls: continue
+                    demand = int(transition_counts.loc[from_cls, to_cls])
+                    if demand <= 0: continue
+                    
+                    growth_mode = (from_cls, to_cls, 'expander') in suitability_sources
+                    
+                    # Find all suitable pixels across the entire map by reading in windows
+                    all_available_scores = []
+                    all_available_coords = []
+                    
+                    for _, window in future_lc_src.block_windows(1):
+                        future_lc_window = future_lc_src.read(1, window=window)
+                        
+                        if growth_mode:
+                            exp_suit = suitability_sources[(from_cls, to_cls, 'expander')].read(1, window=window)
+                            pat_suit = suitability_sources[(from_cls, to_cls, 'patcher')].read(1, window=window)
+                            to_class_mask = (future_lc_window == to_cls)
+                            dilated_mask = binary_dilation(to_class_mask, structure=np.ones((3,3)))
+                            suitability_window = np.where(dilated_mask, exp_suit, pat_suit)
+                        else:
+                            suit_src = suitability_sources.get((from_cls, to_cls))
+                            if not suit_src: continue
+                            suitability_window = suit_src.read(1, window=window)
 
-            coords_to_change = available_coords[chosen_indices]
-            rows, cols = coords_to_change.T
-            future_lc[rows, cols] = to_cls
-            del suitability_map; gc.collect()
-        
-        output_path = os.path.join(temp_dir, "predicted_land_cover.tif")
-        with rasterio.open(output_path, 'w', **profile) as dst:
-            dst.write(future_lc, 1)
-        
+                        available_mask = (future_lc_window == from_cls)
+                        scores = suitability_window[available_mask]
+                        coords = np.argwhere(available_mask)
+                        
+                        global_coords = coords + np.array([window.row_off, window.col_off])
+                        all_available_scores.append(scores)
+                        all_available_coords.append(global_coords)
+                    
+                    all_available_scores = np.concatenate(all_available_scores)
+                    all_available_coords = np.concatenate(all_available_coords)
+                    
+                    num_to_change = min(demand, len(all_available_scores))
+                    if num_to_change <= 0: continue
+                    
+                    top_indices = np.argpartition(all_available_scores, -num_to_change)[-num_to_change:]
+                    coords_to_change = all_available_coords[top_indices]
+                    
+                    # Update the output file pixel by pixel (slow but extremely memory-safe)
+                    for r, c in coords_to_change:
+                        future_lc_src.write(np.array([[to_cls]], dtype=profile['dtype']), 1, window=Window(c, r, 1, 1))
+
         progress_callback(1.0, "Simulation complete!")
         return output_path
+
     except Exception as e:
         raise Exception(f"An error occurred during simulation: {e}")
 
