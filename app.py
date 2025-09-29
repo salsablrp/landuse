@@ -93,6 +93,10 @@ elif st.session_state.active_step == "Data Input":
     
     st.subheader("1a. Upload Historical Land Cover Maps (≥2 years)")
     uploaded_targets = st.file_uploader("Upload GeoTIFF files for land cover", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
+
+    st.subheader("1b. Upload Predictor Rasters")
+    uploaded_predictors = st.file_uploader("Upload predictor GeoTIFF files", type=["tif", "tiff"], accept_multiple_files=True, key="predictors_uploader")
+    if uploaded_predictors: st.session_state.uploaded_predictors = uploaded_predictors
     
     if st.session_state.predictors_loaded:
         # --- "COMPLETED" VIEW ---
@@ -128,10 +132,6 @@ elif st.session_state.active_step == "Data Input":
                 year = col2.number_input(f"Year", min_value=1900, max_value=2100, value=default_year, key=f"year_{f.name}", label_visibility="collapsed")
                 temp_targets.append({'file': f, 'year': year})
             st.session_state.uploaded_targets_with_years = temp_targets
-
-        st.subheader("1b. Upload Predictor Rasters")
-        uploaded_predictors = st.file_uploader("Upload predictor GeoTIFF files", type=["tif", "tiff"], accept_multiple_files=True, key="predictors_uploader")
-        if uploaded_predictors: st.session_state.uploaded_predictors = uploaded_predictors
         
         if st.button("Process & Validate Inputs"):
             targets = st.session_state.uploaded_targets_with_years
