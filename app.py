@@ -449,11 +449,29 @@ elif st.session_state.active_step == "Simulate Future":
                     st.caption(f"-> {os.path.basename(path)}")
 
 
-        with st.expander("Advanced Options: Policy & Simulation Mode"):
-            # ... (Existing code for policy demands and stochastic mode)
-            use_policy_demand = st.checkbox(...)
-            # ...
-            use_stochastic = st.checkbox(...)
+        with st.expander("Advanced Options: Policy & Simulation Mode", expanded=True):
+            use_policy_demand = st.checkbox(
+                "Override historical trends with policy targets", 
+                value=st.session_state.get('use_policy_demand_choice', False),
+                key='use_policy_demand_choice'
+            )
+            
+            if use_policy_demand:
+                st.info("Edit the pixel counts below to set policy-driven demands for each transition.")
+                edited_counts = st.data_editor(
+                    st.session_state.transition_counts, 
+                    use_container_width=True,
+                    key='counts_editor'
+                )
+                final_counts = edited_counts
+            else:
+                final_counts = st.session_state.transition_counts
+            
+            use_stochastic = st.checkbox(
+                "Enable Stochastic Simulation (for uncertainty analysis)", 
+                value=st.session_state.get('use_stochastic_choice', False),
+                key='use_stochastic_choice'
+            )
         
         # --- BUTTON TO RUN OR RE-RUN THE SIMULATION ---
         if st.button("🛰️ Run Simulation"):
