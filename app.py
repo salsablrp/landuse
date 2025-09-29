@@ -157,7 +157,7 @@ elif st.session_state.active_step == "Analyze Change":
             st.dataframe(st.session_state.transition_counts.style.background_gradient(cmap='viridis'))
 
 
-elif st.session_state.active_step == "Train Model":
+elif st.session_state.active_step == "Training Model":
     st.header("Step 3: Train AI Suitability Models")
     st.markdown("""
     The second stage is to map future suitability:
@@ -256,7 +256,7 @@ elif st.session_state.active_step == "Simulate Future":
             status.update(label="Simulation Complete!", state="complete")
 
 
-elif st.session_state.active_step == "5. Visualization":
+elif st.session_state.active_step == "Visualization":
     st.header("Step 5: Visualize and Export Results")
     st.markdown("""
     Here you can:
