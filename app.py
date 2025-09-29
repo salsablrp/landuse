@@ -8,8 +8,12 @@ from streamlit_folium import st_folium
 from landuse_tool import data_loader, change_analysis, training, prediction, visualization, scenarios
 
 # --- Page Configuration and Initialization ---
-st.set_page_config(page_title="Hybrid AI LUC Modeler", page_icon="🌍", layout="wide")
-st.title("🌍 Hybrid AI Land Use Change Modeler")
+st.set_page_config(page_title="Lan Use Prediction Tool", page_icon="🌍", layout="wide")
+st.title("🌍 Land Use Monitoring and Prediction Tool")
+
+def get_file_size_mb(file_list):
+    total_size = sum(f.size for f in file_list)
+    return total_size / (1024 * 1024)
 
 # --- Initialize Session State ---
 def init_state():
@@ -29,8 +33,18 @@ init_state()
 # --- Sidebar ---
 with st.sidebar:
     st.header("Workflow")
-    steps = ["Home", "1. Data Input", "2. Analyze Change", "3. Train AI", "4. Simulate Future", "5. Visualization"]
+    steps = ["Home", "Data Input", "Analyze Change", "Training Model", "Simulate Future", "Visualization"]
     st.session_state.active_step = st.radio("Steps", steps, index=steps.index(st.session_state.active_step), label_visibility="collapsed")
+
+    st.divider()
+
+    st.header("Session Storage")
+    total_mb = get_file_size_mb(st.session_state.uploaded_targets) + get_file_size_mb(st.session_state.uploaded_predictors)
+    STORAGE_LIMIT_MB = 1000 
+    st.progress(min(total_mb / STORAGE_LIMIT_MB, 1.0))
+    st.caption(f"{total_mb:.2f} MB / {STORAGE_LIMIT_MB} MB")
+
+    st.divider()
     
     if st.button("🔄 Reset Workflow", use_container_width=True):
         st.session_state.clear(); st.rerun()
@@ -38,15 +52,36 @@ with st.sidebar:
 # --- Main Page Content ---
 
 if st.session_state.active_step == "Home":
-    st.header("👋 Welcome to the Next-Generation Land Use Modeler")
-    st.markdown("This tool implements a state-of-the-art, three-stage simulation to forecast land use change. It combines statistical trend analysis with a powerful, AI-native suitability engine to create plausible future scenarios.")
+    st.header("👋 Welcome to the Land Use Monitoring and Prediction Tool")
+    st.markdown("""
+                This tool helps helps you analyze and forecast land cover change using remote sensing data and machine learning.
+                
+                This tool implements a state-of-the-art, three-stage simulation to forecast land use change. It combines statistical trend analysis with a powerful, AI-native suitability engine to create plausible future scenarios.
+
+                **Workflow Overview:**
+                1. **Data Input:** Upload historical land cover maps and predictor variables (e.g., elevation, distance to roads).
+                2. **Analyze Change:** Quantify historical land cover transitions and trends.
+                3. **Train AI Model:** Train machine learning models to learn the suitability of each land cover transition.
+                4. **Simulate Future:** Use a Cellular Automata to allocate projected changes across the landscape.
+                5. **Visualization:** Explore your results with an interactive map and export it into TIFF, CSV or JPG format.
+
+                👈 Use the sidebar to begin with **Step 1**.
+                """)
     st.info("To explore advanced features like non-linear trends, policy scenarios, and dynamic neighborhood predictors, please see the options within each step.")
 
-elif st.session_state.active_step == "1. Data Input":
+elif st.session_state.active_step == "Data Input":
     st.header("Step 1: Upload Your Geospatial Data")
-    st.info("All rasters must have the same dimensions, projection, and pixel size.")
+    st.markdown("""
+    In this step, you will upload the required raster datasets:
+
+    - **Land cover targets** from at least two different years.
+    - **Predictor variables**, such as elevation, slope, distance to roads, etc.
+
+    These datasets will be aligned and prepared for training in the next step.
+    """)
+    st.info("All rasters must have the same dimensions, projection, and pixel size. Check the alignment after uploading.")
     
-    st.subheader("1a. Upload Historical Land Cover Maps (≥2)")
+    st.subheader("1a. Upload Historical Land Cover Maps (≥2 years)")
     uploaded_targets = st.file_uploader("Upload GeoTIFF files for land cover", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
     
     if uploaded_targets:
@@ -66,8 +101,8 @@ elif st.session_state.active_step == "1. Data Input":
     
     if st.button("Process & Validate Inputs"):
         targets = st.session_state.uploaded_targets_with_years
-        if len(targets) < 2: st.error("Please upload at least two land cover maps.")
-        elif not st.session_state.uploaded_predictors: st.error("Please upload at least one predictor map.")
+        if len(targets) < 2: st.error("⚠️ Please upload at least two land cover maps.")
+        elif not st.session_state.uploaded_predictors: st.error("⚠️ Please upload at least one predictor map.")
         else:
             with st.spinner("Validating data..."):
                 target_files = [t['file'] for t in targets]
@@ -80,9 +115,18 @@ elif st.session_state.active_step == "1. Data Input":
                     else: st.session_state.targets_loaded = False
                 else: st.session_state.targets_loaded = False
 
-elif st.session_state.active_step == "2. Analyze Change":
+elif st.session_state.active_step == "Analyze Change":
     st.header("Step 2: Quantify Historical Change")
-    if not st.session_state.predictors_loaded: st.warning("Please complete Step 1 first.")
+    st.markdown("""
+    In this step, the model will:
+
+    - Analyze entire historical sequence to understand the rate of change.
+    - Incorporate Markov Chain Analysis to create Transition Probability Matrix.
+    - Calculate historical probability of each Land Use class transitioning to every other class.
+    - Project total amount of land that is expected to change from one class to another by a future target year.
+    - This model will then be used to predict future land cover changes.
+    """)
+    if not st.session_state.predictors_loaded: st.warning("⚠️ Please complete Step 1 first.")
     else:
         num_targets = len(st.session_state.uploaded_targets_with_years)
         analysis_mode = "Non-Linear (Most Recent Trend)" if num_targets > 2 else "Linear (Overall Trend)"
@@ -113,9 +157,17 @@ elif st.session_state.active_step == "2. Analyze Change":
             st.dataframe(st.session_state.transition_counts.style.background_gradient(cmap='viridis'))
 
 
-elif st.session_state.active_step == "3. Train AI":
+elif st.session_state.active_step == "Train Model":
     st.header("Step 3: Train AI Suitability Models")
-    if not st.session_state.analysis_complete: st.warning("Please complete Step 2 first.")
+    st.markdown("""
+    The second stage is to map future suitability:
+    
+    - The model will Train multiple, specialized model for each plausible transition (users will define the minimum number of pixels to be considered as plausible change).
+    - The model will apply Targeted and balanced sampling of each changed and not changed pixels.
+    - Create a training dataset for each transition, and learns the predictor conditions which result in a particular change.
+    -Create a collection of probability maps for every possible change.
+    """)
+    if not st.session_state.analysis_complete: st.warning("⚠️ Please complete Step 2 first.")
     else:
         with st.expander("Advanced Options: Spatially-Aware AI"):
             use_neighborhood = st.checkbox("Enable Neighborhood Predictors (More Accurate, Slower)", value=False)
@@ -153,8 +205,20 @@ elif st.session_state.active_step == "3. Train AI":
             st.session_state.training_complete = True
 
 
-elif st.session_state.active_step == "4. Simulate Future":
+elif st.session_state.active_step == "Simulate Future":
     st.header("Step 4: Simulate Future Land Cover")
+    st.markdown("""
+    In the last stage, users will be given options to choose several approach to apply for future land use simulation.
+
+    1. Cellular automata helps to allocate the quantity of change to the most suitable locations on the map.
+    2. Stochastic allocation will select the pixels not only based on high suitability confidence, but also with stochastic elements, running the simulation multiple times to create equally plausible, future map.
+    3. Growth modes will train two AI models for each transition​
+        
+        - Expander model: trained only on pixels that changed adjacent to existing target LU class patches​
+        - Patcher model: trained only on pixels that changed and created a brand new, isolated patches of the target LU class.
+    
+    The final simulation would then use all selected models, allowing it to realistically simulate both the expansion of existing areas and the spontaneous creation of new ones.
+    """)
     if not st.session_state.training_complete: st.warning("⚠️ Please train AI models in Step 3 first.")
     else:
         st.markdown("This final modeling step uses a Cellular Automata to allocate the projected change across the landscape.")
@@ -194,7 +258,14 @@ elif st.session_state.active_step == "4. Simulate Future":
 
 elif st.session_state.active_step == "5. Visualization":
     st.header("Step 5: Visualize and Export Results")
-    if not st.session_state.simulation_complete: st.warning("Please generate a simulation result in Step 4.")
+    st.markdown("""
+    Here you can:
+
+    - View prediction result as a map.
+    - Export the predicted land cover as PNG or GeoTIFF.
+    - Export the tables (e.g., Transition Pixel Counts Matrix) as CSV.
+    """)
+    if not st.session_state.simulation_complete: st.warning("⚠️ Please generate a simulation result in Step 4.")
     else:
         st.info("Displaying interactive map of the simulated future land cover.")
         with st.spinner("Generating and loading map..."):
