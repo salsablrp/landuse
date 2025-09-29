@@ -285,7 +285,7 @@ elif st.session_state.active_step == "Training Model":
                     st.session_state.get('radius_choice', 5), 
                     key='radius_choice'
                 )
-        use_growth_modes = st.checkbox("Enable Advanced Growth Mode Simulation (Expander/Patcher)", value=st.session_state.get('use_growth_modes_choice', False), key='use_growth_modes_choice')
+            use_growth_modes = st.checkbox("Enable Advanced Growth Mode Simulation (Expander/Patcher)", value=st.session_state.get('use_growth_modes_choice', False), key='use_growth_modes_choice')
 
         threshold = st.number_input(
             "Minimum pixels for a transition to be 'significant'", 
