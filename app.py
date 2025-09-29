@@ -25,6 +25,33 @@ def get_file_size_mb(file_list):
     total_size_bytes = sum(f.size for f in files if f is not None)
     return total_size_bytes / (1024 * 1024)
 
+def remove_file(list_key, file_to_remove):
+    """
+    Removes a specific file from a list in the session state and resets
+    the workflow progress, forcing re-validation.
+    """
+    # The target list is a list of dicts; predictors is a list of file objects.
+    if list_key == "uploaded_targets_with_years":
+        # Find the specific dictionary to remove based on the file object's name
+        st.session_state[list_key] = [
+            item for item in st.session_state[list_key] 
+            if item['file'].name != file_to_remove['file'].name
+        ]
+    else: # For predictors
+        st.session_state[list_key] = [
+            f for f in st.session_state[list_key] 
+            if f.name != file_to_remove.name
+        ]
+    
+    # Invalidate all subsequent steps because the data has changed
+    st.session_state.predictors_loaded = False
+    st.session_state.analysis_complete = False
+    st.session_state.training_complete = False
+    st.session_state.simulation_complete = False
+    
+    # Rerun the app to immediately reflect the changes in the UI
+    st.rerun()
+
 # --- Initialize Session State ---
 def init_state():
     defaults = {
@@ -91,65 +118,79 @@ elif st.session_state.active_step == "Data Input":
     """)
     st.info("All rasters must have the same dimensions, projection, and pixel size. Check the alignment after uploading.")
     
-    st.subheader("1a. Upload Historical Land Cover Maps (≥2 years)")
+    # --- File Uploaders are always visible ---
+    st.subheader("1a. Upload or Add Historical Land Cover Maps (≥2 years)")
     uploaded_targets = st.file_uploader("Upload GeoTIFF files for land cover", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
 
-    st.subheader("1b. Upload Predictor Rasters")
+    st.subheader("1b. Upload or Add Predictor Rasters")
     uploaded_predictors = st.file_uploader("Upload predictor GeoTIFF files", type=["tif", "tiff"], accept_multiple_files=True, key="predictors_uploader")
-    if uploaded_predictors: st.session_state.uploaded_predictors = uploaded_predictors
     
+    # --- Logic to add new files to the session state without losing existing ones ---
+    if uploaded_targets:
+        # Create a set of existing filenames for quick lookup
+        existing_target_names = {item['file'].name for item in st.session_state.uploaded_targets_with_years}
+        for f in uploaded_targets:
+            if f.name not in existing_target_names:
+                # Add new file to the list
+                st.session_state.uploaded_targets_with_years.append({'file': f, 'year': 2000}) # Default year
+                st.session_state.predictors_loaded = False # New files require re-validation
+
+    if uploaded_predictors:
+        existing_predictor_names = {f.name for f in st.session_state.uploaded_predictors}
+        for f in uploaded_predictors:
+            if f.name not in existing_predictor_names:
+                st.session_state.uploaded_predictors.append(f)
+                st.session_state.predictors_loaded = False # New files require re-validation
+
+    st.divider()
+
+    # --- Display Staged Files with Remove Buttons ---
+    st.subheader("Staged Files for Analysis")
+    if not st.session_state.uploaded_targets_with_years and not st.session_state.uploaded_predictors:
+        st.caption("No files have been staged yet.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.expander("Target Layers", expanded=True):
+            for i, item in enumerate(st.session_state.uploaded_targets_with_years):
+                c1, c2, c3 = st.columns([4, 2, 1])
+                c1.text(item['file'].name)
+                # Allow editing the year
+                new_year = c2.number_input("Year", value=item['year'], key=f"year_edit_{item['file'].name}", label_visibility="collapsed")
+                st.session_state.uploaded_targets_with_years[i]['year'] = new_year
+                c3.button("Remove", key=f"rem_t_{item['file'].name}", on_click=remove_file, args=("uploaded_targets_with_years", item))
+
+    with col2:
+        with st.expander("Predictor Layers", expanded=True):
+            for f in st.session_state.uploaded_predictors:
+                c1, c2 = st.columns([5, 1])
+                c1.text(f.name)
+                c2.button("Remove", key=f"rem_p_{f.name}", on_click=remove_file, args=("uploaded_predictors", f))
+
+    st.divider()
+
+    # --- Validation Logic ---
     if st.session_state.predictors_loaded:
-        # --- "COMPLETED" VIEW ---
-        st.success("✅ Data has been successfully uploaded and validated.")
-        st.markdown("You can proceed to the next step or review the uploaded files below.")
-
-        # Display the list of uploaded files in a clean way
-        col1, col2 = st.columns(2)
-        with col1:
-            with st.expander("Uploaded Target Layers", expanded=True):
-                if not st.session_state.uploaded_targets_with_years:
-                    st.caption("No target files found.")
-                else:
-                    for item in st.session_state.uploaded_targets_with_years:
-                        st.text(f"Year {item['year']}: {item['file'].name}")
-        
-        with col2:
-            with st.expander("Uploaded Predictor Layers", expanded=True):
-                if not st.session_state.uploaded_predictors:
-                    st.caption("No predictor files found.")
-                else:
-                    for f in st.session_state.uploaded_predictors:
-                        st.text(f.name)
-
+        st.success("✅ Current set of files has been validated.")
     else:
-        if uploaded_targets:
-            temp_targets = []
-            st.write("Please specify the year for each land cover map:")
-            for i, f in enumerate(uploaded_targets):
-                col1, col2 = st.columns([3, 1])
-                col1.caption(f.name)
-                default_year = 2000 + i 
-                year = col2.number_input(f"Year", min_value=1900, max_value=2100, value=default_year, key=f"year_{f.name}", label_visibility="collapsed")
-                temp_targets.append({'file': f, 'year': year})
-            st.session_state.uploaded_targets_with_years = temp_targets
-        
-        if st.button("Process & Validate Inputs"):
-            targets = st.session_state.uploaded_targets_with_years
-            if len(targets) < 2: st.error("⚠️ Please upload at least two land cover maps.")
-            elif not st.session_state.uploaded_predictors: st.error("⚠️ Please upload at least one predictor map.")
-            else:
-                with st.spinner("Validating data..."):
-                    target_files = [t['file'] for t in targets]
-                    ref_profile, mask = data_loader.load_targets(target_files)
-                    if ref_profile and mask is not None:
-                        st.session_state.ref_profile, st.session_state.mask = ref_profile, mask
-                        st.session_state.targets_loaded = True
-                        is_valid = data_loader.load_predictors(st.session_state.uploaded_predictors, ref_profile)
-                        if is_valid: 
-                            st.session_state.predictors_loaded = True; st.success("All data processed successfully!")
-                            st.rerun()
+        # Show the validation button only if there are files to validate
+        if st.session_state.uploaded_targets_with_years and st.session_state.uploaded_predictors:
+            if st.button("Process & Validate Inputs"):
+                targets = st.session_state.uploaded_targets_with_years
+                if len(targets) < 2: st.error("⚠️ Please stage at least two land cover maps.")
+                else:
+                    with st.spinner("Validating data..."):
+                        target_files = [t['file'] for t in targets]
+                        ref_profile, mask = data_loader.load_targets(target_files)
+                        if ref_profile and mask is not None:
+                            st.session_state.ref_profile, st.session_state.mask = ref_profile, mask
+                            st.session_state.targets_loaded = True
+                            is_valid = data_loader.load_predictors(st.session_state.uploaded_predictors, ref_profile)
+                            if is_valid: 
+                                st.session_state.predictors_loaded = True
+                                st.rerun() 
+                            else: st.session_state.targets_loaded = False
                         else: st.session_state.targets_loaded = False
-                    else: st.session_state.targets_loaded = False
 
 elif st.session_state.active_step == "Analyze Change":
     st.header("Step 2: Quantify Historical Change")
