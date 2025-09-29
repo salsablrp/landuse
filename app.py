@@ -7,8 +7,8 @@ import tempfile
 from landuse_tool import data_loader, change_analysis, training, prediction, visualization
 
 # --- Page Configuration and Initialization ---
-st.set_page_config(page_title="AI LUC Modeler", page_icon="🌍", layout="wide")
-st.title("🌍 Land Use Change Modeler")
+st.set_page_config(page_title="Hybrid AI LUC Modeler", page_icon="🌍", layout="wide")
+st.title("🌍 Hybrid AI Land Use Change Modeler")
 
 # --- Initialize Session State ---
 def init_state():
@@ -135,6 +135,7 @@ elif st.session_state.active_step == "4. Simulate Future":
 
             future_lc_path = prediction.run_simulation(
                 lc_end_file=st.session_state.uploaded_targets[-1],
+                predictor_files=st.session_state.uploaded_predictors,
                 trained_model_paths=st.session_state.model_paths,
                 transition_counts=st.session_state.transition_counts,
                 temp_dir=st.session_state.temp_dir,
