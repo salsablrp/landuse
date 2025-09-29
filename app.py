@@ -8,12 +8,17 @@ from streamlit_folium import st_folium
 from landuse_tool import data_loader, change_analysis, training, prediction, visualization, scenarios
 
 # --- Page Configuration and Initialization ---
-st.set_page_config(page_title="Lan Use Prediction Tool", page_icon="🌍", layout="wide")
+st.set_page_config(page_title="Land Use Prediction Tool", page_icon="🌍", layout="wide")
 st.title("🌍 Land Use Monitoring and Prediction Tool")
 
 def get_file_size_mb(file_list):
-    total_size = sum(f.size for f in file_list)
-    return total_size / (1024 * 1024)
+    """Calculates the total size of a list of uploaded files in MB."""
+    if not file_list:
+        return 0.0
+    # Sum the .size attribute for each file object in the list
+    total_size_bytes = sum(f.size for f in file_list if f is not None)
+    # Convert bytes to megabytes
+    return total_size_bytes / (1024 * 1024)
 
 # --- Initialize Session State ---
 def init_state():
