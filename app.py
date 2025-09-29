@@ -138,9 +138,22 @@ elif st.session_state.active_step == "Analyze Change":
     """)
     if not st.session_state.predictors_loaded: st.warning("⚠️ Please complete Step 1 first.")
     else:
-        num_targets = len(st.session_state.uploaded_targets_with_years)
-        analysis_mode = "Non-Linear (Most Recent Trend)" if num_targets > 2 else "Linear (Overall Trend)"
-        st.subheader(f"Analysis Mode: {analysis_mode}")
+        if st.session_state.analysis_complete:
+            # --- "COMPLETED" VIEW ---
+            st.success("✅ Change analysis is complete.")
+            st.subheader(f"Analysis Mode Used: {st.session_state.analysis_mode}")
+            
+            st.subheader("Define Land Cover Class Names")
+            st.info("Edit the names in the 'Class Name' column below for use in legends.")
+            edited_legends = st.data_editor(st.session_state.class_legends, use_container_width=True)
+            st.session_state.class_legends = edited_legends
+            
+            st.subheader("Transition Pixel Counts")
+            st.dataframe(st.session_state.transition_counts.style.background_gradient(cmap='viridis'))
+        else:
+            num_targets = len(st.session_state.uploaded_targets_with_years)
+            analysis_mode = "Non-Linear (Most Recent Trend)" if num_targets > 2 else "Linear (Overall Trend)"
+            st.subheader(f"Analysis Mode: {analysis_mode}")
 
         if st.button("Run Change Analysis", disabled=st.session_state.analysis_complete):
             with st.spinner("Calculating transition matrix..."):
