@@ -219,7 +219,7 @@ elif st.session_state.active_step == "Analyze Change":
             st.dataframe(st.session_state.transition_counts.style.background_gradient(cmap='viridis'))
         else:
             num_targets = len(st.session_state.uploaded_targets_with_years)
-            analysis_mode = "Non-Linear (Most Recent Trend)" if num_targets > 2 else "Linear (Overall Trend)"
+            analysis_mode = "Non-Linear Trend" if num_targets > 2 else "Linear Trend"
             st.subheader(f"Analysis Mode: {analysis_mode}")
 
         if st.button("Run Change Analysis", disabled=st.session_state.analysis_complete):
