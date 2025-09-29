@@ -59,7 +59,12 @@ def init_state():
         "analysis_complete": False, "training_complete": False, "simulation_complete": False,
         "uploaded_targets_with_years": [], "uploaded_predictors": [], "generated_predictors": [],
         "model_paths": {}, "predicted_filepath": None,
-        "transition_matrix": None, "transition_counts": None, "class_legends": pd.DataFrame(), "scenario_predictors_modified": []
+        "transition_matrix": None, "transition_counts": None, "class_legends": pd.DataFrame(), "scenario_predictors_modified": [], "scenario_predictors_uploaded": [], "use_neighborhood_choice": False,
+        "radius_choice": 5,
+        "use_growth_modes_choice": False,
+        "threshold_choice": 100,
+        "use_policy_demand_choice": False,
+        "use_stochastic_choice": False
     }
     for k, v in defaults.items():
         if k not in st.session_state: st.session_state[k] = v
