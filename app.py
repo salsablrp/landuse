@@ -144,10 +144,10 @@ elif st.session_state.active_step == "Data Input":
 
     st.divider()
 
-    # --- Display Staged Files with Remove Buttons ---
-    st.subheader("Staged Files for Analysis")
+    # --- Display Uploaded Files with Remove Buttons ---
+    st.subheader("Uploaded Files for Analysis")
     if not st.session_state.uploaded_targets_with_years and not st.session_state.uploaded_predictors:
-        st.caption("No files have been staged yet.")
+        st.caption("No files have been uploaded yet.")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -177,7 +177,7 @@ elif st.session_state.active_step == "Data Input":
         if st.session_state.uploaded_targets_with_years and st.session_state.uploaded_predictors:
             if st.button("Process & Validate Inputs"):
                 targets = st.session_state.uploaded_targets_with_years
-                if len(targets) < 2: st.error("⚠️ Please stage at least two land cover maps.")
+                if len(targets) < 2: st.error("⚠️ Please upload at least two land cover maps.")
                 else:
                     with st.spinner("Validating data..."):
                         target_files = [t['file'] for t in targets]
