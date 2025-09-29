@@ -5,12 +5,14 @@ import os
 import joblib
 from contextlib import ExitStack
 from rasterio.windows import Window
+import gc # Import the garbage collector interface
 
 from .data_loader import _open_as_raster
 
-def generate_suitability_map(from_class, model, predictor_files, lc_end_file, temp_dir):
+def generate_suitability_map(from_class, model_path, predictor_files, lc_end_file, temp_dir):
     """Generates a probability map for a specific transition."""
-    temp_filepath = os.path.join(temp_dir, f'suitability_{from_class}.tif')
+    model = joblib.load(model_path)
+    temp_filepath = os.path.join(temp_dir, f'suitability_{from_class}_to_{model_path.split("_")[-1].split(".")[0]}.tif')
 
     with _open_as_raster(lc_end_file) as ref_src:
         ref_arr = ref_src.read(1)
@@ -49,9 +51,9 @@ def generate_suitability_map(from_class, model, predictor_files, lc_end_file, te
     return temp_filepath
 
 
-def run_simulation(lc_end_file, predictor_files, transition_counts, trained_model_paths, temp_dir, stochastic=False, progress_callback=None):
+def run_simulation(lc_end_file, predictor_files, transition_counts, trained_model_paths, temp_dir, progress_callback=None):
     """
-    Runs the full simulation with optional stochastic allocation.
+    Runs the full simulation with more aggressive memory management.
     """
     if progress_callback is None:
         def progress_callback(p, t): pass
@@ -60,40 +62,33 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
         suitability_paths = {}
         significant_transitions = list(trained_model_paths.keys())
         
+        # STAGE 2: Generate Suitability Atlas
         total_models = len(significant_transitions)
         for i, (from_cls, to_cls) in enumerate(significant_transitions):
             progress_text = f"Generating suitability map for {from_cls} -> {to_cls} ({i+1}/{total_models})"
-            progress_callback((i / total_models) * 0.5, progress_text) # Suitability is first 50%
+            progress_callback(i / total_models, progress_text)
             
             model_path = trained_model_paths.get((from_cls, to_cls))
             if not model_path: continue
             
-            model = joblib.load(model_path)
-            
             suitability_map_path = generate_suitability_map(
-                from_class=from_cls, model=model, predictor_files=predictor_files,
+                from_class=from_cls, model_path=model_path, predictor_files=predictor_files,
                 lc_end_file=lc_end_file, temp_dir=temp_dir
             )
             suitability_paths[(from_cls, to_cls)] = suitability_map_path
 
-        progress_callback(0.5, "Suitability atlas complete. Starting allocation...")
+        progress_callback(1.0, "Suitability atlas complete. Starting simulation...")
 
+        # STAGE 3: Cellular Automata Simulation
         with _open_as_raster(lc_end_file) as src:
             future_lc = src.read(1)
             profile = src.profile
         
         sorted_transitions = transition_counts.stack().sort_values(ascending=False).index.tolist()
         
-        total_transitions_to_allocate = len([t for t in sorted_transitions if t[0] != t[1]])
-        current_transition_idx = 0
-
         for from_cls, to_cls in sorted_transitions:
             if from_cls == to_cls: continue
             
-            current_transition_idx += 1
-            progress_text = f"Allocating change for {from_cls} -> {to_cls} ({current_transition_idx}/{total_transitions_to_allocate})"
-            progress_callback(0.5 + (current_transition_idx / total_transitions_to_allocate) * 0.5, progress_text)
-
             demand = int(transition_counts.loc[from_cls, to_cls])
             if demand <= 0: continue
             
@@ -108,20 +103,22 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
             available_coords = np.argwhere(available_mask)
             
             num_to_change = min(demand, len(available_scores))
-            if num_to_change <= 0: continue
+            if num_to_change <= 0:
+                # Clean up before continuing
+                del suitability_map
+                gc.collect()
+                continue
             
-            if stochastic:
-                # Normalize scores to be probabilities for np.random.choice
-                scores_sum = np.sum(available_scores)
-                probabilities = available_scores / scores_sum if scores_sum > 0 else None
-                chosen_indices = np.random.choice(len(available_coords), size=num_to_change, replace=False, p=probabilities)
-            else:
-                # Deterministic: choose the top N highest scores
-                chosen_indices = np.argpartition(available_scores, -num_to_change)[-num_to_change:]
-            
-            coords_to_change = available_coords[chosen_indices]
+            top_indices = np.argpartition(available_scores, -num_to_change)[-num_to_change:]
+            coords_to_change = available_coords[top_indices]
             rows, cols = coords_to_change.T
             future_lc[rows, cols] = to_cls
+
+            # *** KEY IMPROVEMENT ***
+            # Explicitly delete the large suitability map array from memory
+            # and call the garbage collector to free up RAM immediately.
+            del suitability_map
+            gc.collect()
         
         output_path = os.path.join(temp_dir, "predicted_land_cover.tif")
         with rasterio.open(output_path, 'w', **profile) as dst:
