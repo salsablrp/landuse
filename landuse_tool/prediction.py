@@ -53,7 +53,10 @@ def generate_suitability_map(from_class, model_path, predictor_files, lc_end_fil
     return temp_filepath
 
 def run_simulation(lc_end_file, predictor_files, transition_counts, trained_model_paths, temp_dir, stochastic=False, progress_callback=None):
-    if progress_callback is None: def progress_callback(p, t): pass
+    # This is the corrected line. A 'def' must be on its own indented line.
+    if progress_callback is None:
+        def progress_callback(p, t):
+            pass
 
     try:
         suitability_paths = {}
@@ -95,9 +98,11 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
                 # Normalize probabilities for weighted random sampling
                 scores_sum = np.sum(available_scores)
                 probabilities = available_scores / scores_sum if scores_sum > 0 else None
-                if probabilities is not None:
+                if probabilities is not None and np.any(probabilities):
+                    # Ensure probabilities sum to 1 to avoid numpy error
+                    probabilities /= np.sum(probabilities)
                     chosen_indices = np.random.choice(len(available_coords), size=num_to_change, replace=False, p=probabilities)
-                else: # Fallback to deterministic if scores are all zero
+                else: # Fallback to deterministic if scores are all zero or invalid
                     chosen_indices = np.argpartition(available_scores, -num_to_change)[-num_to_change:]
             else: # Deterministic allocation
                 chosen_indices = np.argpartition(available_scores, -num_to_change)[-num_to_change:]
