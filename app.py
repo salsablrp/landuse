@@ -464,16 +464,13 @@ elif st.session_state.active_step == "Simulate Future":
             )
             st.session_state.predicted_filepath = future_lc_path
             st.session_state.simulation_complete = True
-            st.rerun()
+            status.update(label="Simulation Complete!", state="complete")
+            st.success("✅ Simulation process finished successfully! You can now proceed to Visualization.")
 
         st.divider()
-
-        # --- DISPLAY RESULTS IF SIMULATION IS COMPLETE ---
         if st.session_state.simulation_complete:
             st.subheader("Results from Last Simulation Run")
-            st.success("✅ Simulation is complete!")
             st.write("You can view the results in the **Visualization** step or download the predicted map below.")
-            
             if st.session_state.predicted_filepath:
                 with open(st.session_state.predicted_filepath, "rb") as fp:
                     st.download_button(label="Download Predicted Map (GeoTIFF)", data=fp, file_name="predicted_land_cover.tif")
