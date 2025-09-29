@@ -241,16 +241,6 @@ elif st.session_state.active_step == "Analyze Change":
                     
                     st.success("Change analysis complete!")
                     st.rerun()
-        
-        if st.session_state.analysis_complete:
-            st.subheader("Define Land Cover Class Names")
-            st.info("Edit the names in the 'Class Name' column below for use in legends.")
-            edited_legends = st.data_editor(st.session_state.class_legends, use_container_width=True)
-            st.session_state.class_legends = edited_legends
-            
-            st.subheader("Transition Pixel Counts")
-            st.dataframe(st.session_state.transition_counts.style.background_gradient(cmap='viridis'))
-
 
 elif st.session_state.active_step == "Training Model":
     st.header("Step 3: Train AI Suitability Models")
