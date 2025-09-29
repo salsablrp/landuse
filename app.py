@@ -278,111 +278,81 @@ elif st.session_state.active_step == "Training Model":
         # --- UI CONTROLS ARE ALWAYS VISIBLE ---
         st.subheader("Training Configuration")
         with st.expander("Advanced Options: Spatially-Aware AI"):
-            # Use .get() to remember the user's last choice, and assign a key
-            use_neighborhood = st.checkbox(
-                "Enable Neighborhood Predictors (More Accurate, Slower)", 
-                value=st.session_state.get('use_neighborhood_choice', False), 
-                key='use_neighborhood_choice'
-            )
+            use_neighborhood = st.checkbox("Enable Neighborhood Predictors", value=st.session_state.get('use_neighborhood_choice', False), key='use_neighborhood_choice')
             if use_neighborhood:
-                radius = st.slider(
-                    "Neighborhood radius (in pixels)", 1, 10, 
-                    st.session_state.get('radius_choice', 5), 
-                    key='radius_choice'
-                )
-            use_growth_modes = st.checkbox("Enable Advanced Growth Mode Simulation (Expander/Patcher)", value=st.session_state.get('use_growth_modes_choice', False), key='use_growth_modes_choice')
+                radius = st.slider("Neighborhood radius (pixels)", 1, 10, st.session_state.get('radius_choice', 5), key='radius_choice')
+                
+                # Step 1: Generate the predictors
+                if st.button("Generate Neighborhood Predictors"):
+                    with st.spinner("Generating neighborhood predictors... This may take a moment."):
+                        targets = st.session_state.uploaded_targets_with_years
+                        neighborhood_predictors = scenarios.generate_neighborhood_predictors(targets[-1]['file'], st.session_state.temp_dir, radius_pixels=radius)
+                        st.session_state.generated_predictors = neighborhood_predictors
+                        st.success(f"Generated and cached {len(neighborhood_predictors)} neighborhood predictors.")
+                        st.rerun()
+                
+                # Display cached predictors if they exist
+                if st.session_state.generated_predictors:
+                    st.success(f"{len(st.session_state.generated_predictors)} neighborhood predictors are ready.")
 
-        threshold = st.number_input(
-            "Minimum pixels for a transition to be 'significant'", 
-            min_value=1, 
-            value=st.session_state.get('threshold_choice', 100),
-            key='threshold_choice'
-        )
+            use_growth_modes = st.checkbox("Enable Advanced Growth Mode Simulation", value=st.session_state.get('use_growth_modes_choice', False), key='use_growth_modes_choice')
         
-        # --- Calculate total models to train beforehand ---
+        threshold = st.number_input("Minimum pixels for a 'significant' transition", min_value=1, value=st.session_state.get('threshold_choice', 100), key='threshold_choice')
+        
         counts = st.session_state.transition_counts
         significant_transitions = [t for t in counts[counts > threshold].stack().index.tolist() if t[0] != t[1]]
-        
-        total_models_to_train = len(significant_transitions)
-        if use_growth_modes:
-            total_models_to_train *= 2
-            
+        total_models_to_train = len(significant_transitions) * 2 if use_growth_modes else len(significant_transitions)
         st.info(f"Based on your settings, **{total_models_to_train}** AI models will be trained.")
         
-        # --- BUTTON TO RUN OR RE-RUN THE TRAINING ---
         if st.button("Train All Models"):
-            # When the button is clicked, invalidate any subsequent steps
+            # Step 2: Train the models, using cached predictors if available
             st.session_state.simulation_complete = False 
+            all_predictors = st.session_state.uploaded_predictors + st.session_state.generated_predictors
             
-            all_predictors = st.session_state.uploaded_predictors
-            if use_neighborhood:
-                with st.spinner("Generating neighborhood predictors..."):
-                    targets = st.session_state.uploaded_targets_with_years
-                    neighborhood_predictors = scenarios.generate_neighborhood_predictors(targets[-1]['file'], st.session_state.temp_dir, radius_pixels=radius)
-                    st.session_state.generated_predictors = neighborhood_predictors
-                    all_predictors = st.session_state.uploaded_predictors + neighborhood_predictors
-                    st.success(f"Generated {len(neighborhood_predictors)} neighborhood predictors.")
-
-            counts = st.session_state.transition_counts
-            transitions = counts[counts > threshold].stack().index.tolist()
-            
-            # Reset previous results before starting a new run
-            st.session_state.model_paths = {}
-            st.session_state.model_accuracies = {}
-
+            st.session_state.model_paths, st.session_state.model_accuracies = {}, {}
+            progress_bar = st.progress(0)
             status = st.status("Starting model training...", expanded=True)
-
-            # --- Add a counter for progress reporting ---
-            for i, (from_cls, to_cls) in enumerate(transitions):
-                progress_text = f"Training model for {from_cls} -> {to_cls} ({i+1}/{total_models_to_train})"
-                status.update(label=progress_text)
-                
-                X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors)
-                if X is not None:
-                    model, acc = training.train_rf_model(X, y)
-                    if model:
-                        model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
-                        joblib.dump(model, model_path)
-                        st.session_state.model_paths[(from_cls, to_cls)] = model_path
-                        st.session_state.model_accuracies[f"{from_cls} -> {to_cls}"] = acc
-                        status.write(f"✅ Model trained. Accuracy: {acc:.2%}")
+            
+            model_counter = 0
+            for from_cls, to_cls in significant_transitions:
+                if use_growth_modes:
+                    for mode in ['expander', 'patcher']:
+                        model_counter += 1
+                        progress_text = f"Training {mode} model for {from_cls}->{to_cls} ({model_counter}/{total_models_to_train})"
+                        status.update(label=progress_text); progress_bar.progress(model_counter / total_models_to_train)
+                        X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors, mode=mode)
+                        if X is not None:
+                            model, acc = training.train_rf_model(X, y)
+                            if model:
+                                model_path = os.path.join(st.session_state.temp_dir, f"model_{mode}_{from_cls}_{to_cls}.joblib")
+                                joblib.dump(model, model_path); st.session_state.model_paths[(from_cls, to_cls, mode)] = model_path
+                                st.session_state.model_accuracies[f"{from_cls}->{to_cls} ({mode})"] = acc
+                                status.write(f"✅ {mode.capitalize()} model trained. Accuracy: {acc:.2%}")
+                else: # Standard mode
+                    model_counter += 1
+                    progress_text = f"Training model for {from_cls}->{to_cls} ({model_counter}/{total_models_to_train})"
+                    status.update(label=progress_text); progress_bar.progress(model_counter / total_models_to_train)
+                    X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors)
+                    if X is not None:
+                        model, acc = training.train_rf_model(X, y)
+                        if model:
+                            model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
+                            joblib.dump(model, model_path); st.session_state.model_paths[(from_cls, to_cls)] = model_path
+                            st.session_state.model_accuracies[f"{from_cls}->{to_cls}"] = acc
+                            status.write(f"✅ Model trained. Accuracy: {acc:.2%}")
             
             status.update(label="All AI models trained!", state="complete")
             st.session_state.training_complete = True
             st.rerun()
-
-            for from_cls, to_cls in transitions:
-                if from_cls == to_cls: continue
-                status.update(label=f"Training model for transition: {from_cls} -> {to_cls}")
-                X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors)
-                if X is not None:
-                    model, acc = training.train_rf_model(X, y)
-                    if model:
-                        model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
-                        joblib.dump(model, model_path)
-                        st.session_state.model_paths[(from_cls, to_cls)] = model_path
-                        st.session_state.model_accuracies[f"{from_cls} -> {to_cls}"] = acc # Save accuracy for display
-                        status.write(f"✅ Model for {from_cls} -> {to_cls} trained. Accuracy: {acc:.2%}")
-            status.update(label="All AI models trained!", state="complete")
-            st.session_state.training_complete = True
-            st.rerun()
-
-        # --- DISPLAY RESULTS IF TRAINING IS COMPLETE ---
+        
+        st.divider()
         if st.session_state.training_complete:
             st.subheader("Results from Last Training Run")
-            st.write("You can review the results below or change settings and re-run the training.")
-            
             with st.expander("View Trained Model Accuracies", expanded=True):
                 if st.session_state.model_accuracies:
-                    acc_df = pd.DataFrame.from_dict(
-                        st.session_state.model_accuracies, 
-                        orient='index', 
-                        columns=['Accuracy']
-                    )
+                    acc_df = pd.DataFrame.from_dict(st.session_state.model_accuracies, orient='index', columns=['Accuracy'])
                     acc_df.index.name = "Transition"
                     st.dataframe(acc_df.style.format({'Accuracy': '{:.2%}'}))
-                else:
-                    st.caption("No model accuracies recorded from the last run.")
 
 elif st.session_state.active_step == "Simulate Future":
     st.header("Step 4: Simulate Future Land Cover")
