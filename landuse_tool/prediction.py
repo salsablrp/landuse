@@ -134,7 +134,6 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
         with rasterio.open(output_path, 'w', **profile) as dst:
             dst.write(future_lc, 1)
         
-        progress_callback(1.0, "Simulation complete!")
         return output_path
     except Exception as e:
         raise Exception(f"An error occurred during simulation: {e}")

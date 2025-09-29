@@ -8,9 +8,13 @@ import base64
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+# --- NEW: Import the robust file opener ---
+from .data_loader import _open_as_raster
+
 def _raster_to_png_overlay(raster_file, colormap_func, nodata_val):
     """Helper function to convert a raster file to a PNG image overlay for folium."""
-    with rasterio.open(raster_file) as src:
+    # --- MODIFIED: Use the robust _open_as_raster context manager ---
+    with _open_as_raster(raster_file) as src:
         bounds = [[src.bounds.bottom, src.bounds.left], [src.bounds.top, src.bounds.right]]
         
         max_dim = 1024
@@ -19,6 +23,7 @@ def _raster_to_png_overlay(raster_file, colormap_func, nodata_val):
 
         data = src.read(out_shape=out_shape, resampling=Resampling.nearest)[0]
         
+        # Use the passed nodata_val, which should be consistent
         unique_vals = np.unique(data[data != nodata_val])
         colors = {val: colormap_func(i) for i, val in enumerate(range(len(unique_vals)))}
         val_map = {val: i for i, val in enumerate(unique_vals)}
@@ -45,7 +50,8 @@ def create_interactive_map(target_files_with_years=None, prediction_filepath=Non
         return folium.Map(location=[0, 0], zoom_start=2)
 
     ref_file = prediction_filepath or target_files_with_years[0]['file']
-    with rasterio.open(ref_file) as src:
+    # --- MODIFIED: Use the robust _open_as_raster context manager ---
+    with _open_as_raster(ref_file) as src:
         center_lat = (src.bounds.bottom + src.bounds.top) / 2
         center_lon = (src.bounds.left + src.bounds.right) / 2
         zoom = 10
@@ -76,7 +82,6 @@ def create_interactive_map(target_files_with_years=None, prediction_filepath=Non
         ).add_to(m)
 
     if class_legends:
-        # --- IMPROVEMENT: Added color:black; to the style ---
         legend_html = '''
          <div style="position: fixed; bottom: 50px; left: 50px; width: auto; max-width: 250px;
          max-height: 400px; overflow-y: auto; padding: 10px;
@@ -98,10 +103,9 @@ def create_interactive_map(target_files_with_years=None, prediction_filepath=Non
     return m
 
 def create_downloadable_map_image(prediction_filepath, class_legends=None, title="Simulated Future Land Cover"):
-    """
-    Creates a high-quality, static map plot for download with a custom title.
-    """
-    with rasterio.open(prediction_filepath) as src:
+    """Creates a high-quality, static map plot for download."""
+    # --- MODIFIED: Use the robust _open_as_raster context manager ---
+    with _open_as_raster(prediction_filepath) as src:
         data = src.read(1)
         nodata = src.nodata
         
@@ -109,33 +113,26 @@ def create_downloadable_map_image(prediction_filepath, class_legends=None, title
     
     fig, ax = plt.subplots(figsize=(10, 10), dpi=300)
     
-    # Use a colormap that matches the interactive map
     colormap_func = plt.get_cmap('Paired', 20)
     colors = {val: colormap_func(i) for i, val in enumerate(range(len(unique_vals)))}
     val_map = {val: i for i, val in enumerate(unique_vals)}
     
-    # Create a discrete colormap for imshow
     cmap = plt.cm.get_cmap('Paired', len(unique_vals))
     
     im = ax.imshow(data, cmap=cmap, interpolation='nearest')
-    
-    # --- THIS IS THE KEY CHANGE ---
-    # Use the 'title' variable passed into the function
     ax.set_title(title, fontsize=16)
-    
     ax.set_xlabel("Column")
     ax.set_ylabel("Row")
     
-    # Create legend
     if class_legends:
         patches = [mpatches.Patch(color=cmap(val_map[val]), label=class_legends.get(val, f'Class {val}')) for val in unique_vals]
         ax.legend(handles=patches, bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 
     fig.tight_layout()
     
-    # Save to a bytes buffer
     buf = io.BytesIO()
     fig.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     
     return buf.getvalue()
+
