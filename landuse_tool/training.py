@@ -4,6 +4,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from contextlib import ExitStack
 from rasterio.windows import Window
+from tqdm import tqdm
 
 from .data_loader import _open_as_raster
 
@@ -34,7 +35,6 @@ def create_transition_dataset(from_cls, to_cls, lc_start_file, lc_end_file, pred
         y = np.array([1] * n_samples + [0] * n_samples)
         
         X = []
-        # predictor_files can now be a mix of UploadedFile objects and string paths
         with ExitStack() as stack:
             predictors = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
             for r, c in all_coords:
