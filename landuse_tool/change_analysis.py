@@ -48,82 +48,55 @@ def analyze_non_linear_trends(target_files_with_years):
     Analyzes change over multiple periods by fitting a linear regression to the
     rate of change for each transition, then extrapolating to predict future change.
     """
-    st.info("Non-linear mode: Fitting a trend line to the rate of change from all historical periods.")
-    
-    # Sort by year to ensure correct order
     sorted_targets = sorted(target_files_with_years, key=lambda x: x['year'])
-    
     periods = []
     for i in range(len(sorted_targets) - 1):
-        start = sorted_targets[i]
-        end = sorted_targets[i+1]
+        start, end = sorted_targets[i], sorted_targets[i+1]
         period_duration = end['year'] - start['year']
         if period_duration <= 0:
-            st.warning(f"Skipping invalid period: {start['year']} -> {end['year']}. Please ensure years are unique and sequential.")
+            st.warning(f"Skipping invalid period: {start['year']} -> {end['year']}.")
             continue
-            
         midpoint_year = start['year'] + period_duration / 2
-        
         _, counts = calculate_transition_matrix(start['file'], end['file'])
         if counts is not None:
-            # Calculate the average annual rate for this period
             annual_rate = counts / period_duration
             periods.append({'midpoint': midpoint_year, 'rates': annual_rate})
 
     if len(periods) < 2:
-        st.error("Cannot perform non-linear analysis with fewer than two valid time periods. Please provide at least 3 land cover maps with different years.")
+        st.error("Cannot perform non-linear analysis with fewer than two valid time periods (requires at least 3 maps).")
         return None, None
 
-    # --- Perform the regression for each transition ---
-    # Get the union of all classes from all periods
     all_classes = sorted(list(set(index for p in periods for index in p['rates'].index)))
-    
-    # Use the last period's counts as a template for the output shape
     final_counts_template = periods[-1]['rates'].reindex(index=all_classes, columns=all_classes, fill_value=0)
-    projected_annual_rates = pd.DataFrame(0, index=final_counts_template.index, columns=final_counts_template.columns)
-    
+    projected_annual_rates = pd.DataFrame(0.0, index=final_counts_template.index, columns=final_counts_template.columns)
     years = np.array([p['midpoint'] for p in periods]).reshape(-1, 1)
 
-    with st.expander("View Non-Linear Trend Analysis"):
+    with st.expander("View Non-Linear Trend Analysis Plots"):
         for from_cls in final_counts_template.index:
             for to_cls in final_counts_template.columns:
                 if from_cls == to_cls: continue
+                rate_timeseries = [p['rates'].loc[from_cls, to_cls] if from_cls in p['rates'].index and to_cls in p['rates'].columns else 0 for p in periods]
+                if np.sum(rate_timeseries) == 0: continue
                 
-                # Create the time-series for this specific transition
-                rate_timeseries = [p['rates'].get(to_cls, {}).get(from_cls, 0) for p in periods]
-                
-                if np.sum(rate_timeseries) == 0: continue # Skip if this transition never happened
-
-                # Simple linear regression: y = mx + c
-                from sklearn.linear_model import LinearRegression
                 model = LinearRegression()
                 model.fit(years, rate_timeseries)
                 
-                # Predict the rate for the next period's midpoint
                 last_period_duration = periods[-1]['midpoint'] - periods[-2]['midpoint']
                 future_midpoint = periods[-1]['midpoint'] + last_period_duration
                 predicted_rate = model.predict([[future_midpoint]])[0]
                 
-                # Ensure the predicted rate is not negative
                 projected_annual_rates.loc[from_cls, to_cls] = max(0, predicted_rate)
 
-                # Optional: Display a plot for significant trends
-                if np.mean(rate_timeseries) > 100: # Only plot significant trends
+                if np.mean(rate_timeseries) > 100:
                     fig, ax = plt.subplots()
                     ax.scatter(years, rate_timeseries, label='Historical Annual Rate')
                     ax.plot(years, model.predict(years), color='red', linestyle='--', label='Trend Line')
                     ax.scatter([future_midpoint], [predicted_rate], color='green', zorder=5, label='Predicted Future Rate')
                     ax.set_title(f'Trend for Transition: {from_cls} -> {to_cls}')
-                    ax.set_xlabel('Year')
-                    ax.set_ylabel('Annual Pixel Change Rate')
-                    ax.legend()
+                    ax.set_xlabel('Year'); ax.set_ylabel('Annual Pixel Change Rate'); ax.legend()
                     st.pyplot(fig)
 
-    # Project the predicted annual rate over the total historical period
-    # to get the final demand for the simulation
     total_historical_period = sorted_targets[-1]['year'] - sorted_targets[0]['year']
     projected_total_counts = projected_annual_rates * total_historical_period
     
-    # Return the latest transition matrix for reference, but the projected counts for simulation
     return periods[-1]['rates'].reindex_like(final_counts_template), projected_total_counts.round().astype(int)
-
