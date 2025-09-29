@@ -260,7 +260,7 @@ elif st.session_state.active_step == "Analyze Change":
 elif st.session_state.active_step == "Training Model":
     st.header("Step 3: Train AI Suitability Models")
     st.markdown("""
-    The second stage is to map future suitability:
+    The third stage is to map future suitability:
     
     - The model will Train multiple, specialized model for each plausible transition (users will define the minimum number of pixels to be considered as plausible change).
     - The model will apply Targeted and balanced sampling of each changed and not changed pixels.
@@ -330,8 +330,6 @@ elif st.session_state.active_step == "Training Model":
             status.update(label="All AI models trained!", state="complete")
             st.session_state.training_complete = True
             st.rerun()
-
-        st.divider()
 
         # --- DISPLAY RESULTS IF TRAINING IS COMPLETE ---
         if st.session_state.training_complete:
