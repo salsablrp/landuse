@@ -285,6 +285,7 @@ elif st.session_state.active_step == "Training Model":
                     st.session_state.get('radius_choice', 5), 
                     key='radius_choice'
                 )
+        use_growth_modes = st.checkbox("Enable Advanced Growth Mode Simulation (Expander/Patcher)", value=st.session_state.get('use_growth_modes_choice', False), key='use_growth_modes_choice')
 
         threshold = st.number_input(
             "Minimum pixels for a transition to be 'significant'", 
@@ -396,29 +397,21 @@ elif st.session_state.active_step == "Simulate Future":
         st.subheader("Simulation Configuration")
         with st.expander("Advanced Options: Policy & Scenario Levers", expanded=True):
             # Use .get() to remember the last choice
-            use_policy_demand = st.checkbox(
-                "Override historical trends with policy targets", 
-                value=st.session_state.get('use_policy_demand_choice', False),
-                key='use_policy_demand_choice'
-            )
+            st.markdown("**1. Add a Future Scenario Predictor (Optional)**")
+            scenario_predictor_file = st.file_uploader("Upload a GeoTIFF like a future road network or zoning plan.", type=["tif", "tiff"], key="scenario_uploader")
+            if scenario_predictor_file:
+                st.session_state.scenario_predictors = [scenario_predictor_file]
+            
+            st.markdown("**2. Set Policy Demands (Optional)**")
+            use_policy_demand = st.checkbox("Override historical trends with policy targets", value=st.session_state.get('use_policy_demand_choice', False), key='use_policy_demand_choice')
             if use_policy_demand:
-                st.info("Edit the pixel counts below to set policy-driven demands for each transition.")
-                # The data editor needs a key to be editable.
-                # We save its edited state back to the main transition_counts.
-                edited_counts = st.data_editor(
-                    st.session_state.transition_counts, 
-                    use_container_width=True,
-                    key='counts_editor'
-                )
+                edited_counts = st.data_editor(st.session_state.transition_counts, use_container_width=True, key='counts_editor')
                 final_counts = edited_counts
             else:
                 final_counts = st.session_state.transition_counts
             
-            use_stochastic = st.checkbox(
-                "Enable Stochastic Simulation (for uncertainty analysis)", 
-                value=st.session_state.get('use_stochastic_choice', False),
-                key='use_stochastic_choice'
-            )
+            st.markdown("**3. Set Simulation Mode (Optional)**")
+            use_stochastic = st.checkbox("Enable Stochastic Simulation", value=st.session_state.get('use_stochastic_choice', False), key='use_stochastic_choice')
         
         # --- BUTTON TO RUN OR RE-RUN THE SIMULATION ---
         if st.button("🛰️ Run Simulation"):
@@ -455,7 +448,12 @@ elif st.session_state.active_step == "Visualization":
         st.info("Displaying interactive map of the simulated future land cover.")
         with st.spinner("Generating and loading map..."):
             class_legends_dict = st.session_state.class_legends['Class Name'].to_dict()
-            m = visualization.create_interactive_map(st.session_state.predicted_filepath, class_legends_dict)
+            m = visualization.create_interactive_map(
+                target_files_with_years=st.session_state.uploaded_targets_with_years,
+                prediction_filepath=st.session_state.predicted_filepath,
+                class_legends=class_legends_dict
+            )
+            
             st_folium(m, width=None, height=700)
 
         st.subheader("Download Results")

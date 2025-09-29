@@ -4,26 +4,45 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from contextlib import ExitStack
 from rasterio.windows import Window
-from tqdm import tqdm
+from scipy.ndimage import binary_dilation
 
 from .data_loader import _open_as_raster
 
-def create_transition_dataset(from_cls, to_cls, lc_start_file, lc_end_file, predictor_files):
-    """Creates a targeted, balanced training dataset for a specific transition."""
+def create_transition_dataset(from_cls, to_cls, lc_start_file, lc_end_file, predictor_files, mode='all'):
+    """
+    Creates a targeted, balanced training dataset for a specific transition.
+    Includes logic for 'expander' and 'patcher' growth modes.
+    """
     try:
         with _open_as_raster(lc_start_file) as src_start, _open_as_raster(lc_end_file) as src_end:
             lc_start = src_start.read(1)
             lc_end = src_end.read(1)
-            
+        
         positive_mask = (lc_start == from_cls) & (lc_end == to_cls)
         negative_mask = (lc_start == from_cls) & (lc_end == from_cls)
         
         positive_coords = np.argwhere(positive_mask)
+        
+        if mode != 'all':
+            # Find areas of the to_class that existed in the start year
+            initial_to_class_mask = (lc_start == to_cls)
+            # Dilate this mask to find pixels adjacent to the initial patches
+            dilated_mask = binary_dilation(initial_to_class_mask, structure=np.ones((3,3)))
+            
+            # Expander pixels are positive change pixels that are adjacent to initial patches
+            expander_mask = dilated_mask & positive_mask
+            
+            if mode == 'expander':
+                positive_coords = np.argwhere(expander_mask)
+            elif mode == 'patcher':
+                # Patcher pixels are positive change pixels that are NOT adjacent
+                patcher_mask = ~dilated_mask & positive_mask
+                positive_coords = np.argwhere(patcher_mask)
+
         negative_coords = np.argwhere(negative_mask)
         
         n_samples = min(len(positive_coords), len(negative_coords))
-        if n_samples < 10:
-            return None, None
+        if n_samples < 10: return None, None
             
         max_samples = 50000 
         n_samples = min(n_samples, max_samples)
@@ -45,12 +64,9 @@ def create_transition_dataset(from_cls, to_cls, lc_start_file, lc_end_file, pred
     except Exception:
         return None, None
 
-
 def train_rf_model(X, y):
     """Trains a Random Forest model and returns the model and its accuracy."""
-    if X is None or y is None or len(X) == 0:
-        return None, 0
-    
+    if X is None or y is None or len(X) == 0: return None, 0
     try:
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, stratify=y, random_state=42)
         model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
