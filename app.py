@@ -495,16 +495,10 @@ elif st.session_state.active_step == "Simulate Future":
             )
             st.session_state.predicted_filepath = future_lc_path
             st.session_state.simulation_complete = True
-            
-            # --- CRITICAL FIX: Removed st.rerun() ---
-            # Now, the success message will appear reliably.
-            status.update(label="Simulation Complete!", state="complete")
-            st.success("✅ Simulation process finished successfully! You can now proceed to Visualization.")
 
-        st.divider()
-        if st.session_state.simulation_complete:
-            st.subheader("Results from Last Simulation Run")
-            st.write("You can view the results in the **Visualization** step or download the predicted map below.")
+            status.update(label="All AI models trained!", state="complete")
+            st.session_state.training_complete = True
+            st.rerun()
 
 elif st.session_state.active_step == "Visualization":
     st.header("Step 5: Visualize and Export Results")
