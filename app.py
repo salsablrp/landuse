@@ -15,7 +15,7 @@ def init_state():
     defaults = {
         "active_step": "Home", "targets_loaded": False, "predictors_loaded": False,
         "analysis_complete": False, "training_complete": False, "simulation_complete": False,
-        "uploaded_targets": [], "uploaded_predictors": [],
+        "uploaded_targets_with_years": [], "uploaded_predictors": [],
         "model_paths": {}, "predicted_filepath": None,
         "transition_matrix": None, "transition_counts": None
     }
@@ -47,21 +47,39 @@ elif st.session_state.active_step == "1. Data Input":
     st.info("Please upload your data. All rasters must have the same dimensions, projection, and pixel size.")
     
     st.subheader("1a. Upload Historical Land Cover Maps (≥2)")
-    uploaded_targets = st.file_uploader("Upload GeoTIFF files", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
-    if uploaded_targets: st.session_state.uploaded_targets = uploaded_targets
+    uploaded_targets = st.file_uploader("Upload GeoTIFF files for land cover", type=["tif", "tiff"], accept_multiple_files=True, key="targets_uploader")
+    
+    # --- NEW: Year Input Logic ---
+    if uploaded_targets:
+        temp_targets = []
+        # Create a neat layout for year inputs
+        st.write("Please specify the year for each land cover map:")
+        for i, f in enumerate(uploaded_targets):
+            # Use columns to align the filename and the number input
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.caption(f.name)
+            with col2:
+                # Provide a sensible default year to make it easier for the user
+                default_year = 2000 + i 
+                year = st.number_input(f"Year", min_value=1900, max_value=2100, value=default_year, key=f"year_{f.name}", label_visibility="collapsed")
+            temp_targets.append({'file': f, 'year': year})
+        st.session_state.uploaded_targets_with_years = temp_targets
 
     st.subheader("1b. Upload Predictor Rasters")
     uploaded_predictors = st.file_uploader("Upload predictor GeoTIFF files", type=["tif", "tiff"], accept_multiple_files=True, key="predictors_uploader")
     if uploaded_predictors: st.session_state.uploaded_predictors = uploaded_predictors
     
     if st.button("Process & Validate Inputs"):
-        if len(st.session_state.uploaded_targets) < 2:
+        targets = st.session_state.uploaded_targets_with_years
+        if len(targets) < 2:
             st.error("Please upload at least two land cover maps.")
         elif not st.session_state.uploaded_predictors:
             st.error("Please upload at least one predictor map.")
         else:
             with st.spinner("Validating data..."):
-                ref_profile, mask = data_loader.load_targets(st.session_state.uploaded_targets)
+                target_files = [t['file'] for t in targets]
+                ref_profile, mask = data_loader.load_targets(target_files)
                 if ref_profile and mask is not None:
                     st.session_state.ref_profile, st.session_state.mask = ref_profile, mask
                     st.session_state.targets_loaded = True
@@ -79,10 +97,21 @@ elif st.session_state.active_step == "2. Analyze Change":
     if not st.session_state.predictors_loaded:
         st.warning("Please complete Step 1 first.")
     else:
-        st.markdown("This step analyzes your first and last land cover maps to calculate the rate of change.")
+        # --- NEW: Automatic Mode Detection ---
+        num_targets = len(st.session_state.uploaded_targets_with_years)
+        analysis_mode = "Non-Linear (using most recent trend)" if num_targets > 2 else "Linear (using overall trend)"
+        st.subheader(f"Analysis Mode Detected: {analysis_mode}")
+        
+        st.markdown("This step analyzes your land cover maps to calculate the rate of change. This determines *how much* land is projected to change in the future.")
         if st.button("Run Change Analysis", disabled=st.session_state.analysis_complete):
             with st.spinner("Calculating transition matrix..."):
-                matrix, counts = change_analysis.calculate_transition_matrix(st.session_state.uploaded_targets[0], st.session_state.uploaded_targets[-1])
+                targets_with_years = st.session_state.uploaded_targets_with_years
+                # Call the correct function based on the mode
+                if analysis_mode.startswith("Non-Linear"):
+                    matrix, counts = change_analysis.analyze_non_linear_trends(targets_with_years)
+                else:
+                    matrix, counts = change_analysis.calculate_transition_matrix(targets_with_years[0]['file'], targets_with_years[-1]['file'])
+                
                 if matrix is not None:
                     st.session_state.transition_matrix, st.session_state.transition_counts = matrix, counts
                     st.session_state.analysis_complete = True
@@ -105,11 +134,13 @@ elif st.session_state.active_step == "3. Train AI":
             transitions = counts[counts > threshold].stack().index.tolist()
             
             with st.expander("Training Log", expanded=True):
+                target_files = [t['file'] for t in st.session_state.uploaded_targets_with_years]
                 for from_cls, to_cls in transitions:
                     if from_cls == to_cls: continue
                     st.write(f"--- Training model for transition: {from_cls} -> {to_cls} ---")
                     with st.spinner(f"Creating dataset..."):
-                        X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets[0], st.session_state.uploaded_targets[-1], st.session_state.uploaded_predictors)
+                        # Use the first and last files for training the suitability
+                        X, y = training.create_transition_dataset(from_cls, to_cls, target_files[0], target_files[-1], st.session_state.uploaded_predictors)
                     if X is not None:
                         with st.spinner(f"Training model..."):
                             model, acc = training.train_rf_model(X, y)
@@ -134,7 +165,7 @@ elif st.session_state.active_step == "4. Simulate Future":
             def cb(p, t): progress_bar.progress(p, text=t)
 
             future_lc_path = prediction.run_simulation(
-                lc_end_file=st.session_state.uploaded_targets[-1],
+                lc_end_file=st.session_state.uploaded_targets_with_years[-1]['file'],
                 predictor_files=st.session_state.uploaded_predictors,
                 trained_model_paths=st.session_state.model_paths,
                 transition_counts=st.session_state.transition_counts,
@@ -145,9 +176,6 @@ elif st.session_state.active_step == "4. Simulate Future":
             st.session_state.simulation_complete = True
             st.success("✅ Simulation complete.")
             progress_bar.empty()
-            # *** KEY IMPROVEMENT ***
-            # No st.rerun() here. Let Streamlit finish the script run naturally
-            # to ensure the session state is saved reliably.
 
 elif st.session_state.active_step == "5. Visualization":
     st.header("Step 5: Visualize and Export Results")
@@ -155,8 +183,6 @@ elif st.session_state.active_step == "5. Visualization":
         st.warning("Please complete all previous steps to generate a result.")
     else:
         st.info(f"Displaying result from the latest prediction.")
-        # Visualization logic can be upgraded here later.
-        # For now, keeping the simple plot and download buttons.
         if st.button("📊 Show Predicted Map as Image"):
             with st.spinner("Loading map..."):
                 fig = visualization.plot_prediction_from_path(st.session_state.predicted_filepath)

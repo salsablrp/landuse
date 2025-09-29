@@ -17,8 +17,6 @@ def calculate_transition_matrix(file1, file2):
 
             nodata = src1.nodata
             if nodata is None:
-                # If no nodata value is defined, assume a common one for safety
-                # but it's better if the source data has it defined.
                 unique_vals = np.unique(arr1)
                 nodata = -9999 if -9999 not in unique_vals else np.min(unique_vals) - 1
             
@@ -47,9 +45,9 @@ def calculate_transition_matrix(file1, file2):
 def analyze_non_linear_trends(target_files_with_years):
     """
     Analyzes change over multiple periods to detect non-linear trends.
-    For now, it calculates the most recent rate of change.
+    This implementation uses the rate of change from the most recent period for projection.
     """
-    st.info("Non-linear mode activated. Using the rate of change from the most recent period for projection.")
+    st.info("Non-linear mode: Using the rate of change from the most recent period for projection.")
     
     # Sort by year to ensure correct order
     sorted_targets = sorted(target_files_with_years, key=lambda x: x['year'])
@@ -58,21 +56,30 @@ def analyze_non_linear_trends(target_files_with_years):
     recent_start_file = sorted_targets[-2]['file']
     recent_end_file = sorted_targets[-1]['file']
     
-    start_year = sorted_targets[-2]['year']
-    end_year = sorted_targets[-1]['year']
+    start_year_recent = sorted_targets[-2]['year']
+    end_year_recent = sorted_targets[-1]['year']
     
-    st.write(f"Analyzing trend from the most recent interval: **{start_year} -> {end_year}**")
+    start_year_overall = sorted_targets[0]['year']
+    end_year_overall = sorted_targets[-1]['year']
+    
+    st.write(f"Analyzing trend from the most recent interval: **{start_year_recent} -> {end_year_recent}**")
 
     matrix, counts = calculate_transition_matrix(recent_start_file, recent_end_file)
+    if counts is None:
+        return None, None
     
-    # Adjust the counts to project over the full historical period for simulation consistency
-    total_period = sorted_targets[-1]['year'] - sorted_targets[0]['year']
-    recent_period = end_year - start_year
+    # Project the recent rate over the total historical period for the simulation
+    # This keeps the magnitude of change consistent with the simulation's forecast period
+    total_period = end_year_overall - start_year_overall
+    recent_period = end_year_recent - start_year_recent
     
     if recent_period > 0:
-        projection_factor = total_period / recent_period
-        projected_counts = (counts / recent_period) * total_period
+        # Calculate the average annual rate from the recent period
+        annual_rate = counts / recent_period
+        # Project this annual rate over the total historical period
+        projected_counts = annual_rate * total_period
         return matrix, projected_counts.round().astype(int)
     else:
+        # If years are the same, no projection is possible, return the raw counts
         return matrix, counts
 
