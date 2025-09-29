@@ -11,9 +11,9 @@ from scipy.ndimage import binary_dilation
 from .data_loader import _open_as_raster
 
 def generate_suitability_map(from_class, model_path, predictor_files, lc_end_file, temp_dir, model_type=''):
+    """Generates a probability map for a specific transition."""
     model = joblib.load(model_path)
     to_cls = os.path.basename(model_path).split('_')[-1].split('.')[0]
-    # Add model type to filename to distinguish expander/patcher maps
     filename = f'suitability_{model_type}_{from_class}_to_{to_cls}.tif' if model_type else f'suitability_{from_class}_to_{to_cls}.tif'
     temp_filepath = os.path.join(temp_dir, filename)
 
@@ -46,16 +46,21 @@ def generate_suitability_map(from_class, model_path, predictor_files, lc_end_fil
     return temp_filepath
 
 def run_simulation(lc_end_file, predictor_files, transition_counts, trained_model_paths, temp_dir, stochastic=False, progress_callback=None):
-    # This is the corrected line. A 'def' must be on its own indented line.
     if progress_callback is None:
         def progress_callback(p, t):
             pass
+            
     try:
         suitability_paths = {}
-        # Check if we are in growth mode
-        growth_mode = any('_expander_' in v for v in trained_model_paths.values())
+        growth_mode = any(len(k) == 3 for k in trained_model_paths.keys())
 
-        transitions_to_model = set(k for k, v in trained_model_paths.items() if '_expander_' in v or '_patcher_' in v) if growth_mode else set(trained_model_paths.keys())
+        # --- THIS IS THE CORRECTED LOGIC ---
+        # It now correctly creates a set of unique (from_cls, to_cls) pairs,
+        # regardless of whether the original keys have 2 or 3 elements.
+        if growth_mode:
+            transitions_to_model = set((k[0], k[1]) for k in trained_model_paths.keys())
+        else:
+            transitions_to_model = set(trained_model_paths.keys())
 
         total_models = len(trained_model_paths)
         i = 0
@@ -95,14 +100,10 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
                     exp_suit = exp_src.read(1)
                     pat_suit = pat_src.read(1)
 
-                # Create a combined suitability map based on proximity to existing patches
                 to_class_mask = (future_lc == to_cls)
                 dilated_mask = binary_dilation(to_class_mask, structure=np.ones((3,3)))
-                
-                # Use expander scores for adjacent pixels, patcher scores for others
                 suitability_map = np.where(dilated_mask, exp_suit, pat_suit)
-
-            else: # Standard mode
+            else:
                 suitability_path = suitability_paths.get((from_cls, to_cls))
                 if not suitability_path: continue
                 with rasterio.open(suitability_path) as src: suitability_map = src.read(1)
@@ -113,7 +114,6 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
             num_to_change = min(demand, len(available_scores))
             if num_to_change <= 0: del suitability_map; gc.collect(); continue
             
-            # Stochastic or deterministic allocation
             if stochastic:
                 scores_sum = np.sum(available_scores)
                 if scores_sum > 0:
@@ -134,6 +134,7 @@ def run_simulation(lc_end_file, predictor_files, transition_counts, trained_mode
         with rasterio.open(output_path, 'w', **profile) as dst:
             dst.write(future_lc, 1)
         
+        progress_callback(1.0, "Simulation complete!")
         return output_path
     except Exception as e:
         raise Exception(f"An error occurred during simulation: {e}")
