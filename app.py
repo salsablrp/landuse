@@ -293,6 +293,13 @@ elif st.session_state.active_step == "Training Model":
             key='threshold_choice'
         )
         
+        # --- Calculate total models to train beforehand ---
+        counts = st.session_state.transition_counts
+        transitions = [t for t in counts[counts > threshold].stack().index.tolist() if t[0] != t[1]]
+        total_models_to_train = len(transitions)
+
+        st.info(f"Based on your settings, **{total_models_to_train}** AI models will be trained.")
+        
         # --- BUTTON TO RUN OR RE-RUN THE TRAINING ---
         if st.button("Train All Models"):
             # When the button is clicked, invalidate any subsequent steps
@@ -315,6 +322,26 @@ elif st.session_state.active_step == "Training Model":
             st.session_state.model_accuracies = {}
 
             status = st.status("Starting model training...", expanded=True)
+
+            # --- Add a counter for progress reporting ---
+            for i, (from_cls, to_cls) in enumerate(transitions):
+                progress_text = f"Training model for {from_cls} -> {to_cls} ({i+1}/{total_models_to_train})"
+                status.update(label=progress_text)
+                
+                X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors)
+                if X is not None:
+                    model, acc = training.train_rf_model(X, y)
+                    if model:
+                        model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
+                        joblib.dump(model, model_path)
+                        st.session_state.model_paths[(from_cls, to_cls)] = model_path
+                        st.session_state.model_accuracies[f"{from_cls} -> {to_cls}"] = acc
+                        status.write(f"✅ Model trained. Accuracy: {acc:.2%}")
+            
+            status.update(label="All AI models trained!", state="complete")
+            st.session_state.training_complete = True
+            st.rerun()
+
             for from_cls, to_cls in transitions:
                 if from_cls == to_cls: continue
                 status.update(label=f"Training model for transition: {from_cls} -> {to_cls}")
@@ -412,7 +439,7 @@ elif st.session_state.active_step == "Simulate Future":
             )
             st.session_state.predicted_filepath = future_lc_path
             st.session_state.simulation_complete = True
-            st.rerun() # Rerun to show the results section
+            st.success("✅ Simulation process finished successfully! You can now proceed to Visualization.")
 
 elif st.session_state.active_step == "Visualization":
     st.header("Step 5: Visualize and Export Results")
@@ -432,7 +459,63 @@ elif st.session_state.active_step == "Visualization":
             st_folium(m, width=None, height=700)
 
         st.subheader("Download Results")
-        if st.session_state.predicted_filepath:
-            with open(st.session_state.predicted_filepath, "rb") as fp:
-                st.download_button(label="Download Predicted Map (GeoTIFF)", data=fp, file_name="predicted_land_cover.tif")
+        if st.session_state.simulation_complete and st.session_state.predicted_filepath:
+            st.divider()
+            st.subheader("Download Center")
+            
+            col1, col2 = st.columns(2)
+            
+            # Column 1: Map Downloads
+            with col1:
+                st.markdown("##### Map Outputs")
+                # GeoTIFF Download
+                with open(st.session_state.predicted_filepath, "rb") as fp:
+                    st.download_button(
+                        label="📥 Download Predicted Map (GeoTIFF)", 
+                        data=fp, 
+                        file_name="predicted_land_cover.tif"
+                    )
+                
+                # --- NEW: Add a text input for the map title ---
+                map_title = st.text_input(
+                    "Enter Title for Map Image:", 
+                    value="Simulated Future Land Cover"
+                )
+
+                # Map Image (PNG) Download
+                with st.spinner("Generating map image for download..."):
+                    # --- MODIFIED: Pass the user's title to the function ---
+                    img_bytes = visualization.create_downloadable_map_image(
+                        st.session_state.predicted_filepath, 
+                        class_legends_dict,
+                        title=map_title
+                    )
+                st.download_button(
+                    label="🖼️ Download Map Image (PNG)",
+                    data=img_bytes,
+                    file_name="predicted_map.png"
+                )
+
+            # Column 2: Data Table Downloads
+            with col2:
+                st.markdown("##### Data Outputs")
+                # Transition Counts CSV
+                if st.session_state.transition_counts is not None:
+                    csv_transitions = st.session_state.transition_counts.to_csv().encode('utf-8')
+                    st.download_button(
+                        label="📊 Download Transition Counts (CSV)", 
+                        data=csv_transitions, 
+                        file_name="transition_counts.csv"
+                    )
+                
+                # Model Accuracy CSV
+                if st.session_state.model_accuracies:
+                    acc_df = pd.DataFrame.from_dict(st.session_state.model_accuracies, orient='index', columns=['Accuracy'])
+                    acc_df.index.name = "Transition"
+                    csv_accuracy = acc_df.to_csv().encode('utf-8')
+                    st.download_button(
+                        label="📈 Download Accuracy Matrix (CSV)",
+                        data=csv_accuracy,
+                        file_name="model_accuracies.csv"
+                    )
 
