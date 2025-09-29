@@ -403,12 +403,13 @@ elif st.session_state.active_step == "Simulate Future":
     else:
         # --- UI CONTROLS ARE ALWAYS VISIBLE ---
         st.subheader("Simulation Configuration")
+
         with st.expander("Scenario Builder: Create a Future Scenario (Optional)", expanded=True):
             st.markdown("**1. Upload New Future Predictor Layers**")
             st.info("Upload any new layers that represent a future state, like a planned road network or a new zoning map. These will be added to the simulation.")
             scenario_files_new = st.file_uploader(
                 "Upload GeoTIFFs", type=["tif", "tiff"], 
-                accept_multiple_files=True, # Allows multiple file uploads
+                accept_multiple_files=True,
                 key="scenario_uploader_new"
             )
             if scenario_files_new: st.session_state.scenario_predictors_uploaded = scenario_files_new
@@ -416,7 +417,6 @@ elif st.session_state.active_step == "Simulate Future":
             st.markdown("**2. Modify an Existing Predictor Layer**")
             st.info("Select one of your original predictors and apply a simple calculation to create a new scenario layer.")
             
-            # Create a list of original predictor names for the selectbox
             original_predictor_names = [f.name for f in st.session_state.uploaded_predictors]
             
             col1, col2, col3 = st.columns(3)
@@ -425,7 +425,6 @@ elif st.session_state.active_step == "Simulate Future":
             value = col3.number_input("Value", value=1.0, format="%.2f")
 
             if st.button("Apply Modification"):
-                # Find the actual file object from the selected name
                 layer_file_object = next((f for f in st.session_state.uploaded_predictors if f.name == layer_to_modify_name), None)
                 if layer_file_object:
                     with st.spinner(f"Calculating '{layer_to_modify_name} {operator} {value}'..."):
@@ -436,18 +435,15 @@ elif st.session_state.active_step == "Simulate Future":
                             temp_dir=st.session_state.temp_dir
                         )
                         if modified_path:
-                            # We store the path, as the file object is temporary
                             st.session_state.scenario_predictors_modified.append(modified_path)
                             st.success(f"Created new scenario layer: {os.path.basename(modified_path)}")
                 else:
                     st.error("Could not find the selected predictor file.")
 
-            # Display the list of modified scenario predictors
             if st.session_state.scenario_predictors_modified:
                 st.write("Modified Predictor Layers:")
                 for path in st.session_state.scenario_predictors_modified:
                     st.caption(f"-> {os.path.basename(path)}")
-
 
         with st.expander("Advanced Options: Policy & Simulation Mode", expanded=True):
             use_policy_demand = st.checkbox(
@@ -475,14 +471,17 @@ elif st.session_state.active_step == "Simulate Future":
         
         # --- BUTTON TO RUN OR RE-RUN THE SIMULATION ---
         if st.button("🛰️ Run Simulation"):
-            progress_bar = st.progress(0)
             status = st.status("Starting simulation...", expanded=True)
             def cb(p, t): 
                 status.update(label=t)
-                progress_bar.progress(p)
             
             targets = st.session_state.uploaded_targets_with_years
-            all_predictors = st.session_state.uploaded_predictors + st.session_state.get('generated_predictors', [])
+            all_predictors = (
+                st.session_state.uploaded_predictors + 
+                st.session_state.get('generated_predictors', []) +
+                st.session_state.get('scenario_predictors_uploaded', []) +
+                st.session_state.get('scenario_predictors_modified', [])
+            )
             
             future_lc_path = prediction.run_simulation(
                 lc_end_file=targets[-1]['file'],
@@ -495,10 +494,19 @@ elif st.session_state.active_step == "Simulate Future":
             )
             st.session_state.predicted_filepath = future_lc_path
             st.session_state.simulation_complete = True
-
-            status.update(label="All AI models trained!", state="complete")
-            st.session_state.training_complete = True
             st.rerun()
+
+        st.divider()
+
+        # --- DISPLAY RESULTS IF SIMULATION IS COMPLETE ---
+        if st.session_state.simulation_complete:
+            st.subheader("Results from Last Simulation Run")
+            st.success("✅ Simulation is complete!")
+            st.write("You can view the results in the **Visualization** step or download the predicted map below.")
+            
+            if st.session_state.predicted_filepath:
+                with open(st.session_state.predicted_filepath, "rb") as fp:
+                    st.download_button(label="Download Predicted Map (GeoTIFF)", data=fp, file_name="predicted_land_cover.tif")
 
 elif st.session_state.active_step == "Visualization":
     st.header("Step 5: Visualize and Export Results")
