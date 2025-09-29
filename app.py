@@ -11,13 +11,18 @@ from landuse_tool import data_loader, change_analysis, training, prediction, vis
 st.set_page_config(page_title="Land Use Prediction Tool", page_icon="🌍", layout="wide")
 st.title("🌍 Land Use Monitoring and Prediction Tool")
 
+# --- Helper Functions ---
 def get_file_size_mb(file_list):
     """Calculates the total size of a list of uploaded files in MB."""
     if not file_list:
         return 0.0
-    # Sum the .size attribute for each file object in the list
-    total_size_bytes = sum(f.size for f in file_list if f is not None)
-    # Convert bytes to megabytes
+    # The file list for targets is a list of dicts, so we extract the file object
+    if isinstance(file_list[0], dict) and 'file' in file_list[0]:
+        files = [item['file'] for item in file_list if item.get('file')]
+    else:
+        files = file_list
+    
+    total_size_bytes = sum(f.size for f in files if f is not None)
     return total_size_bytes / (1024 * 1024)
 
 # --- Initialize Session State ---
@@ -44,7 +49,7 @@ with st.sidebar:
     st.divider()
 
     st.header("Session Storage")
-    total_mb = get_file_size_mb(st.session_state.uploaded_targets) + get_file_size_mb(st.session_state.uploaded_predictors)
+    total_mb = get_file_size_mb(st.session_state.get("uploaded_targets_with_years", [])) + get_file_size_mb(st.session_state.get("uploaded_predictors", []))
     STORAGE_LIMIT_MB = 1000 
     st.progress(min(total_mb / STORAGE_LIMIT_MB, 1.0))
     st.caption(f"{total_mb:.2f} MB / {STORAGE_LIMIT_MB} MB")
