@@ -205,6 +205,7 @@ elif st.session_state.active_step == "Analyze Change":
     """)
     if not st.session_state.predictors_loaded: st.warning("⚠️ Please complete Step 1 first.")
     else:
+        # Check if the step is ALREADY complete
         if st.session_state.analysis_complete:
             # --- "COMPLETED" VIEW ---
             st.success("✅ Change analysis is complete.")
@@ -215,32 +216,46 @@ elif st.session_state.active_step == "Analyze Change":
             edited_legends = st.data_editor(st.session_state.class_legends, use_container_width=True)
             st.session_state.class_legends = edited_legends
             
-            st.subheader("Transition Pixel Counts")
+            st.subheader("Projected Transition Pixel Counts")
             st.dataframe(st.session_state.transition_counts.style.background_gradient(cmap='viridis'))
-        else:
+
+            # --- NEW: Display the saved plots ---
+            if st.session_state.analysis_mode.startswith("Non-Linear") and "trend_plots" in st.session_state:
+                with st.expander("View Non-Linear Trend Analysis Plots"):
+                    if not st.session_state.trend_plots:
+                        st.caption("No transitions were significant enough to plot.")
+                    else:
+                        for fig in st.session_state.trend_plots:
+                            st.pyplot(fig)
+
+        else:            
             num_targets = len(st.session_state.uploaded_targets_with_years)
             analysis_mode = "Non-Linear Trend" if num_targets > 2 else "Linear Trend"
             st.subheader(f"Analysis Mode: {analysis_mode}")
 
-        if st.button("Run Change Analysis", disabled=st.session_state.analysis_complete):
-            with st.spinner("Calculating transition matrix..."):
-                targets_with_years = st.session_state.uploaded_targets_with_years
-                if analysis_mode.startswith("Non-Linear"):
-                    matrix, counts = change_analysis.analyze_non_linear_trends(targets_with_years)
-                else:
-                    matrix, counts = change_analysis.calculate_transition_matrix(targets_with_years[0]['file'], targets_with_years[-1]['file'])
+            if st.button("Run Change Analysis"):
+                with st.spinner("Calculating transition matrix and trends..."):
+                    targets_with_years = st.session_state.uploaded_targets_with_years
+                    
+                    if analysis_mode.startswith("Non-Linear"):
+                        # Expect three return values now
+                        matrix, counts, plots = change_analysis.analyze_non_linear_trends(targets_with_years)
+                        st.session_state.trend_plots = plots # Save the plots
+                    else:
+                        # Also expect three return values
+                        matrix, counts, _ = change_analysis.calculate_transition_matrix(targets_with_years[0]['file'], targets_with_years[-1]['file'])
+                        st.session_state.trend_plots = [] # Save an empty list
 
-                if matrix is not None and counts is not None:
-                    st.session_state.transition_matrix = matrix
-                    st.session_state.transition_counts = counts
-                    st.session_state.analysis_complete = True
-                    st.session_state.analysis_mode = analysis_mode
-                    
-                    class_ids = counts.index.tolist()
-                    st.session_state.class_legends = pd.DataFrame({'Class Name': [f'Class {i}' for i in class_ids]}, index=class_ids)
-                    
-                    st.success("Change analysis complete!")
-                    st.rerun()
+                    if matrix is not None and counts is not None:
+                        st.session_state.transition_matrix = matrix
+                        st.session_state.transition_counts = counts
+                        st.session_state.analysis_complete = True
+                        st.session_state.analysis_mode = analysis_mode
+                        
+                        class_ids = counts.index.tolist()
+                        st.session_state.class_legends = pd.DataFrame({'Class Name': [f'Class {i}' for i in class_ids]}, index=class_ids)
+                        
+                        st.rerun()
 
 elif st.session_state.active_step == "Training Model":
     st.header("Step 3: Train AI Suitability Models")
@@ -250,18 +265,81 @@ elif st.session_state.active_step == "Training Model":
     - The model will Train multiple, specialized model for each plausible transition (users will define the minimum number of pixels to be considered as plausible change).
     - The model will apply Targeted and balanced sampling of each changed and not changed pixels.
     - Create a training dataset for each transition, and learns the predictor conditions which result in a particular change.
-    -Create a collection of probability maps for every possible change.
+    - Create a collection of probability maps for every possible change.
     """)
-    if not st.session_state.analysis_complete: st.warning("⚠️ Please complete Step 2 first.")
+    if not st.session_state.analysis_complete: 
+        st.warning("⚠️ Please complete Step 2 first.")
     else:
-        if st.session_state.training_complete:
-            # --- "COMPLETED" VIEW ---
-            st.success("✅ AI model training is complete.")
-            st.write("You can review the trained models below or proceed to the next step.")
+        # --- UI CONTROLS ARE ALWAYS VISIBLE ---
+        st.subheader("Training Configuration")
+        with st.expander("Advanced Options: Spatially-Aware AI"):
+            # Use .get() to remember the user's last choice, and assign a key
+            use_neighborhood = st.checkbox(
+                "Enable Neighborhood Predictors (More Accurate, Slower)", 
+                value=st.session_state.get('use_neighborhood_choice', False), 
+                key='use_neighborhood_choice'
+            )
+            if use_neighborhood:
+                radius = st.slider(
+                    "Neighborhood radius (in pixels)", 1, 10, 
+                    st.session_state.get('radius_choice', 5), 
+                    key='radius_choice'
+                )
+
+        threshold = st.number_input(
+            "Minimum pixels for a transition to be 'significant'", 
+            min_value=1, 
+            value=st.session_state.get('threshold_choice', 100),
+            key='threshold_choice'
+        )
+        
+        # --- BUTTON TO RUN OR RE-RUN THE TRAINING ---
+        if st.button("Train All Models"):
+            # When the button is clicked, invalidate any subsequent steps
+            st.session_state.simulation_complete = False 
             
-            with st.expander("View Trained Model Accuracies"):
-                if "model_accuracies" in st.session_state and st.session_state.model_accuracies:
-                    # Create a nice dataframe from the accuracies dictionary
+            all_predictors = st.session_state.uploaded_predictors
+            if use_neighborhood:
+                with st.spinner("Generating neighborhood predictors..."):
+                    targets = st.session_state.uploaded_targets_with_years
+                    neighborhood_predictors = scenarios.generate_neighborhood_predictors(targets[-1]['file'], st.session_state.temp_dir, radius_pixels=radius)
+                    st.session_state.generated_predictors = neighborhood_predictors
+                    all_predictors = st.session_state.uploaded_predictors + neighborhood_predictors
+                    st.success(f"Generated {len(neighborhood_predictors)} neighborhood predictors.")
+
+            counts = st.session_state.transition_counts
+            transitions = counts[counts > threshold].stack().index.tolist()
+            
+            # Reset previous results before starting a new run
+            st.session_state.model_paths = {}
+            st.session_state.model_accuracies = {}
+
+            status = st.status("Starting model training...", expanded=True)
+            for from_cls, to_cls in transitions:
+                if from_cls == to_cls: continue
+                status.update(label=f"Training model for transition: {from_cls} -> {to_cls}")
+                X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors)
+                if X is not None:
+                    model, acc = training.train_rf_model(X, y)
+                    if model:
+                        model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
+                        joblib.dump(model, model_path)
+                        st.session_state.model_paths[(from_cls, to_cls)] = model_path
+                        st.session_state.model_accuracies[f"{from_cls} -> {to_cls}"] = acc # Save accuracy for display
+                        status.write(f"✅ Model for {from_cls} -> {to_cls} trained. Accuracy: {acc:.2%}")
+            status.update(label="All AI models trained!", state="complete")
+            st.session_state.training_complete = True
+            st.rerun()
+
+        st.divider()
+
+        # --- DISPLAY RESULTS IF TRAINING IS COMPLETE ---
+        if st.session_state.training_complete:
+            st.subheader("Results from Last Training Run")
+            st.write("You can review the results below or change settings and re-run the training.")
+            
+            with st.expander("View Trained Model Accuracies", expanded=True):
+                if st.session_state.model_accuracies:
                     acc_df = pd.DataFrame.from_dict(
                         st.session_state.model_accuracies, 
                         orient='index', 
@@ -270,44 +348,7 @@ elif st.session_state.active_step == "Training Model":
                     acc_df.index.name = "Transition"
                     st.dataframe(acc_df.style.format({'Accuracy': '{:.2%}'}))
                 else:
-                    st.caption("No model accuracies recorded.")
-        else:
-            with st.expander("Advanced Options: Spatially-Aware AI"):
-                use_neighborhood = st.checkbox("Enable Neighborhood Predictors (More Accurate, Slower)", value=False)
-                if use_neighborhood:
-                    radius = st.slider("Neighborhood radius (in pixels)", 1, 10, 5)
-
-            threshold = st.number_input("Minimum pixels for a transition to be 'significant'", min_value=1, value=100)
-            
-            if st.button("Train All Models", disabled=st.session_state.training_complete):
-                all_predictors = st.session_state.uploaded_predictors
-                if use_neighborhood:
-                    with st.spinner("Generating neighborhood predictors..."):
-                        targets = st.session_state.uploaded_targets_with_years
-                        neighborhood_predictors = scenarios.generate_neighborhood_predictors(targets[-1]['file'], st.session_state.temp_dir, radius_pixels=radius)
-                        st.session_state.generated_predictors = neighborhood_predictors
-                        all_predictors = st.session_state.uploaded_predictors + neighborhood_predictors
-                        st.success(f"Generated {len(neighborhood_predictors)} neighborhood predictors.")
-
-                counts = st.session_state.transition_counts
-                transitions = counts[counts > threshold].stack().index.tolist()
-                
-                status = st.status("Starting model training...", expanded=True)
-                for from_cls, to_cls in transitions:
-                    if from_cls == to_cls: continue
-                    status.update(label=f"Training model for transition: {from_cls} -> {to_cls}")
-                    X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors)
-                    if X is not None:
-                        model, acc = training.train_rf_model(X, y)
-                        if model:
-                            model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
-                            joblib.dump(model, model_path)
-                            st.session_state.model_paths[(from_cls, to_cls)] = model_path
-                            status.write(f"✅ Model for {from_cls} -> {to_cls} trained. Accuracy: {acc:.2%}")
-                status.update(label="All AI models trained!", state="complete")
-                st.session_state.training_complete = True
-                st.rerun()
-
+                    st.caption("No model accuracies recorded from the last run.")
 
 elif st.session_state.active_step == "Simulate Future":
     st.header("Step 4: Simulate Future Land Cover")
@@ -323,51 +364,57 @@ elif st.session_state.active_step == "Simulate Future":
     
     The final simulation would then use all selected models, allowing it to realistically simulate both the expansion of existing areas and the spontaneous creation of new ones.
     """)
-    if not st.session_state.training_complete: st.warning("⚠️ Please train AI models in Step 3 first.")
+    if not st.session_state.training_complete: 
+        st.warning("⚠️ Please train AI models in Step 3 first.")
     else:
-        if st.session_state.simulation_complete:
-            # --- "COMPLETED" VIEW ---
-            st.success("✅ Simulation is complete!")
-            st.markdown("You can now view the results in the **Visualization** step or download the predicted map below.")
-            
-            if st.session_state.predicted_filepath:
-                with open(st.session_state.predicted_filepath, "rb") as fp:
-                    st.download_button(label="Download Predicted Map (GeoTIFF)", data=fp, file_name="predicted_land_cover.tif")
-        
-        else:
-            # Scenario Options
-            with st.expander("Advanced Options: Policy & Scenario Levers"):
-                use_policy_demand = st.checkbox("Override historical trends with policy targets", value=False)
-                if use_policy_demand:
-                    st.info("Edit the pixel counts below to set policy-driven demands for each transition.")
-                    edited_counts = st.data_editor(st.session_state.transition_counts, use_container_width=True)
-                    final_counts = edited_counts
-                else:
-                    final_counts = st.session_state.transition_counts
-                
-                use_stochastic = st.checkbox("Enable Stochastic Simulation (for uncertainty analysis)", value=False)
-            
-            if st.button("🛰️ Run Simulation", disabled=st.session_state.simulation_complete):
-                status = st.status("Starting simulation...", expanded=True)
-                def cb(p, t): status.update(label=t)
-                
-                targets = st.session_state.uploaded_targets_with_years
-                all_predictors = st.session_state.uploaded_predictors + st.session_state.generated_predictors
-                
-                future_lc_path = prediction.run_simulation(
-                    lc_end_file=targets[-1]['file'],
-                    predictor_files=all_predictors,
-                    transition_counts=final_counts,
-                    trained_model_paths=st.session_state.model_paths,
-                    temp_dir=st.session_state.temp_dir,
-                    stochastic=use_stochastic,
-                    progress_callback=cb
+        # --- UI CONTROLS ARE ALWAYS VISIBLE ---
+        st.subheader("Simulation Configuration")
+        with st.expander("Advanced Options: Policy & Scenario Levers", expanded=True):
+            # Use .get() to remember the last choice
+            use_policy_demand = st.checkbox(
+                "Override historical trends with policy targets", 
+                value=st.session_state.get('use_policy_demand_choice', False),
+                key='use_policy_demand_choice'
+            )
+            if use_policy_demand:
+                st.info("Edit the pixel counts below to set policy-driven demands for each transition.")
+                # The data editor needs a key to be editable.
+                # We save its edited state back to the main transition_counts.
+                edited_counts = st.data_editor(
+                    st.session_state.transition_counts, 
+                    use_container_width=True,
+                    key='counts_editor'
                 )
-                st.session_state.predicted_filepath = future_lc_path
-                st.session_state.simulation_complete = True
-                status.update(label="Simulation Complete!", state="complete")
-                st.rerun()
-
+                final_counts = edited_counts
+            else:
+                final_counts = st.session_state.transition_counts
+            
+            use_stochastic = st.checkbox(
+                "Enable Stochastic Simulation (for uncertainty analysis)", 
+                value=st.session_state.get('use_stochastic_choice', False),
+                key='use_stochastic_choice'
+            )
+        
+        # --- BUTTON TO RUN OR RE-RUN THE SIMULATION ---
+        if st.button("🛰️ Run Simulation"):
+            status = st.status("Starting simulation...", expanded=True)
+            def cb(p, t): status.update(label=t)
+            
+            targets = st.session_state.uploaded_targets_with_years
+            all_predictors = st.session_state.uploaded_predictors + st.session_state.get('generated_predictors', [])
+            
+            future_lc_path = prediction.run_simulation(
+                lc_end_file=targets[-1]['file'],
+                predictor_files=all_predictors,
+                transition_counts=final_counts,
+                trained_model_paths=st.session_state.model_paths,
+                temp_dir=st.session_state.temp_dir,
+                stochastic=use_stochastic,
+                progress_callback=cb
+            )
+            st.session_state.predicted_filepath = future_lc_path
+            st.session_state.simulation_complete = True
+            st.rerun() # Rerun to show the results section
 
 elif st.session_state.active_step == "Visualization":
     st.header("Step 5: Visualize and Export Results")
