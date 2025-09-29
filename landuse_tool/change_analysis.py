@@ -2,6 +2,7 @@ import rasterio
 import numpy as np
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 from .data_loader import _open_as_raster
 
 def calculate_transition_matrix(file1, file2):
@@ -44,42 +45,85 @@ def calculate_transition_matrix(file1, file2):
 
 def analyze_non_linear_trends(target_files_with_years):
     """
-    Analyzes change over multiple periods to detect non-linear trends.
-    This implementation uses the rate of change from the most recent period for projection.
+    Analyzes change over multiple periods by fitting a linear regression to the
+    rate of change for each transition, then extrapolating to predict future change.
     """
-    st.info("Non-linear mode: Using the rate of change from the most recent period for projection.")
+    st.info("Non-linear mode: Fitting a trend line to the rate of change from all historical periods.")
     
     # Sort by year to ensure correct order
     sorted_targets = sorted(target_files_with_years, key=lambda x: x['year'])
     
-    # Use the last two maps to calculate the most recent rate of change
-    recent_start_file = sorted_targets[-2]['file']
-    recent_end_file = sorted_targets[-1]['file']
-    
-    start_year_recent = sorted_targets[-2]['year']
-    end_year_recent = sorted_targets[-1]['year']
-    
-    start_year_overall = sorted_targets[0]['year']
-    end_year_overall = sorted_targets[-1]['year']
-    
-    st.write(f"Analyzing trend from the most recent interval: **{start_year_recent} -> {end_year_recent}**")
+    periods = []
+    for i in range(len(sorted_targets) - 1):
+        start = sorted_targets[i]
+        end = sorted_targets[i+1]
+        period_duration = end['year'] - start['year']
+        if period_duration <= 0:
+            st.warning(f"Skipping invalid period: {start['year']} -> {end['year']}. Please ensure years are unique and sequential.")
+            continue
+            
+        midpoint_year = start['year'] + period_duration / 2
+        
+        _, counts = calculate_transition_matrix(start['file'], end['file'])
+        if counts is not None:
+            # Calculate the average annual rate for this period
+            annual_rate = counts / period_duration
+            periods.append({'midpoint': midpoint_year, 'rates': annual_rate})
 
-    matrix, counts = calculate_transition_matrix(recent_start_file, recent_end_file)
-    if counts is None:
+    if len(periods) < 2:
+        st.error("Cannot perform non-linear analysis with fewer than two valid time periods. Please provide at least 3 land cover maps with different years.")
         return None, None
+
+    # --- Perform the regression for each transition ---
+    # Get the union of all classes from all periods
+    all_classes = sorted(list(set(index for p in periods for index in p['rates'].index)))
     
-    # Project the recent rate over the total historical period for the simulation
-    # This keeps the magnitude of change consistent with the simulation's forecast period
-    total_period = end_year_overall - start_year_overall
-    recent_period = end_year_recent - start_year_recent
+    # Use the last period's counts as a template for the output shape
+    final_counts_template = periods[-1]['rates'].reindex(index=all_classes, columns=all_classes, fill_value=0)
+    projected_annual_rates = pd.DataFrame(0, index=final_counts_template.index, columns=final_counts_template.columns)
     
-    if recent_period > 0:
-        # Calculate the average annual rate from the recent period
-        annual_rate = counts / recent_period
-        # Project this annual rate over the total historical period
-        projected_counts = annual_rate * total_period
-        return matrix, projected_counts.round().astype(int)
-    else:
-        # If years are the same, no projection is possible, return the raw counts
-        return matrix, counts
+    years = np.array([p['midpoint'] for p in periods]).reshape(-1, 1)
+
+    with st.expander("View Non-Linear Trend Analysis"):
+        for from_cls in final_counts_template.index:
+            for to_cls in final_counts_template.columns:
+                if from_cls == to_cls: continue
+                
+                # Create the time-series for this specific transition
+                rate_timeseries = [p['rates'].get(to_cls, {}).get(from_cls, 0) for p in periods]
+                
+                if np.sum(rate_timeseries) == 0: continue # Skip if this transition never happened
+
+                # Simple linear regression: y = mx + c
+                from sklearn.linear_model import LinearRegression
+                model = LinearRegression()
+                model.fit(years, rate_timeseries)
+                
+                # Predict the rate for the next period's midpoint
+                last_period_duration = periods[-1]['midpoint'] - periods[-2]['midpoint']
+                future_midpoint = periods[-1]['midpoint'] + last_period_duration
+                predicted_rate = model.predict([[future_midpoint]])[0]
+                
+                # Ensure the predicted rate is not negative
+                projected_annual_rates.loc[from_cls, to_cls] = max(0, predicted_rate)
+
+                # Optional: Display a plot for significant trends
+                if np.mean(rate_timeseries) > 100: # Only plot significant trends
+                    fig, ax = plt.subplots()
+                    ax.scatter(years, rate_timeseries, label='Historical Annual Rate')
+                    ax.plot(years, model.predict(years), color='red', linestyle='--', label='Trend Line')
+                    ax.scatter([future_midpoint], [predicted_rate], color='green', zorder=5, label='Predicted Future Rate')
+                    ax.set_title(f'Trend for Transition: {from_cls} -> {to_cls}')
+                    ax.set_xlabel('Year')
+                    ax.set_ylabel('Annual Pixel Change Rate')
+                    ax.legend()
+                    st.pyplot(fig)
+
+    # Project the predicted annual rate over the total historical period
+    # to get the final demand for the simulation
+    total_historical_period = sorted_targets[-1]['year'] - sorted_targets[0]['year']
+    projected_total_counts = projected_annual_rates * total_historical_period
+    
+    # Return the latest transition matrix for reference, but the projected counts for simulation
+    return periods[-1]['rates'].reindex_like(final_counts_template), projected_total_counts.round().astype(int)
 
