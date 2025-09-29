@@ -439,42 +439,72 @@ elif st.session_state.active_step == "Simulate Future":
                 key='use_stochastic_choice'
             )
         
-        # --- BUTTON TO RUN OR RE-RUN THE SIMULATION ---
-        if st.button("🛰️ Run Simulation"):
-            status = st.status("Starting simulation...", expanded=True)
+        st.divider()
+
+        # --- NEW: Two-Step Simulation Workflow ---
+        st.subheader("Step 4a: Generate Suitability Atlas")
+        st.info("This is the most computationally intensive step. It uses the trained AI models to generate a probability map for each transition.")
+        
+        if st.button("Generate Suitability Atlas"):
+            st.session_state.suitability_atlas_complete = False # Reset if re-running
+            st.session_state.simulation_complete = False
+            
+            progress_bar = st.progress(0)
+            status = st.status("Generating Suitability Atlas...", expanded=True)
             def cb(p, t): 
                 status.update(label=t)
+                progress_bar.progress(p)
             
             targets = st.session_state.uploaded_targets_with_years
-            all_predictors = (
-                st.session_state.uploaded_predictors + 
-                st.session_state.get('generated_predictors', []) +
-                st.session_state.get('scenario_predictors_uploaded', []) +
-                st.session_state.get('scenario_predictors_modified', [])
-            )
+            all_predictors = st.session_state.uploaded_predictors + st.session_state.generated_predictors + st.session_state.scenario_predictors_uploaded + st.session_state.scenario_predictors_modified
             
-            future_lc_path = prediction.run_simulation(
-                lc_end_file=targets[-1]['file'],
+            suitability_paths = prediction.generate_suitability_atlas(
                 predictor_files=all_predictors,
-                transition_counts=final_counts,
+                lc_end_file=targets[-1]['file'],
                 trained_model_paths=st.session_state.model_paths,
                 temp_dir=st.session_state.temp_dir,
-                stochastic=use_stochastic,
                 progress_callback=cb
             )
-            st.session_state.predicted_filepath = future_lc_path
-            st.session_state.simulation_complete = True
-            status.update(label="Simulation Complete!", state="complete")
-            st.success("✅ Simulation process finished successfully! You can now proceed to Visualization.")
+            st.session_state.suitability_paths = suitability_paths
+            st.session_state.suitability_atlas_complete = True
+            status.update(label="Suitability Atlas generation complete!", state="complete")
+            st.rerun()
+
+        if st.session_state.get("suitability_atlas_complete"):
+            st.success("✅ Suitability Atlas is ready for the final simulation.")
+            st.subheader("Step 4b: Run Final Simulation")
+            st.info("This step is much faster. It uses the pre-generated suitability maps to allocate the projected land use changes.")
+
+            with st.expander("Download Suitability Maps (Optional)"):
+                for (from_cls, to_cls, *mode), path in st.session_state.suitability_paths.items():
+                    mode_str = f"_{mode[0]}" if mode else ""
+                    with open(path, "rb") as fp:
+                        st.download_button(
+                            label=f"Download Suitability: {from_cls} -> {to_cls}{mode_str}",
+                            data=fp,
+                            file_name=os.path.basename(path)
+                        )
+
+            if st.button("🛰️ Run Final Simulation"):
+                with st.spinner("Allocating change..."):
+                    future_lc_path = prediction.run_allocation_simulation(
+                        lc_end_file=st.session_state.uploaded_targets_with_years[-1]['file'],
+                        transition_counts=final_counts, # Assumes final_counts is defined from your UI logic
+                        suitability_paths=st.session_state.suitability_paths,
+                        temp_dir=st.session_state.temp_dir,
+                        stochastic=use_stochastic # Assumes use_stochastic is defined from your UI logic
+                    )
+                    st.session_state.predicted_filepath = future_lc_path
+                    st.session_state.simulation_complete = True
+                    st.success("✅ Simulation process finished successfully! You can now proceed to Visualization.")
 
         st.divider()
         if st.session_state.simulation_complete:
             st.subheader("Results from Last Simulation Run")
-            st.write("You can view the results in the **Visualization** step or download the predicted map below.")
             if st.session_state.predicted_filepath:
                 with open(st.session_state.predicted_filepath, "rb") as fp:
                     st.download_button(label="Download Predicted Map (GeoTIFF)", data=fp, file_name="predicted_land_cover.tif")
-
+                    
 elif st.session_state.active_step == "Visualization":
     st.header("Step 5: Visualize and Export Results")
     st.markdown("""
