@@ -324,7 +324,9 @@ elif st.session_state.active_step == "Training Model":
             st.session_state.simulation_complete = False 
             all_predictors = st.session_state.uploaded_predictors + st.session_state.generated_predictors
             
-            st.session_state.training_predictor_schema = [f.name if hasattr(f, 'name') else os.path.basename(f) for f in all_predictors]
+            st.session_state.training_predictor_schema = [
+                f.name if hasattr(f, 'name') else os.path.basename(f) for f in all_predictors
+            ]
 
             st.session_state.model_paths, st.session_state.model_accuracies = {}, {}
             progress_bar = st.progress(0)
@@ -339,10 +341,11 @@ elif st.session_state.active_step == "Training Model":
                         status.update(label=progress_text); progress_bar.progress(model_counter / total_models_to_train)
                         X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors, mode=mode)
                         if X is not None:
-                            model, acc = training.train_rf_model(X, y)
-                            if model:
-                                model_path = os.path.join(st.session_state.temp_dir, f"model_{mode}_{from_cls}_{to_cls}.joblib")
-                                joblib.dump(model, model_path); st.session_state.model_paths[(from_cls, to_cls, mode)] = model_path
+                            # <-- MODIFIED: Construct model path and pass it to the training function
+                            model_path = os.path.join(st.session_state.temp_dir, f"model_{mode}_{from_cls}_{to_cls}.joblib")
+                            acc = training.train_rf_model(X, y, model_path, st.session_state.training_predictor_schema)
+                            if acc:
+                                st.session_state.model_paths[(from_cls, to_cls, mode)] = model_path
                                 st.session_state.model_accuracies[f"{from_cls}->{to_cls} ({mode})"] = acc
                                 status.write(f"✅ {mode.capitalize()} model trained. Accuracy: {acc:.2%}")
                 else: # Standard mode
@@ -351,10 +354,11 @@ elif st.session_state.active_step == "Training Model":
                     status.update(label=progress_text); progress_bar.progress(model_counter / total_models_to_train)
                     X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors)
                     if X is not None:
-                        model, acc = training.train_rf_model(X, y)
-                        if model:
-                            model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
-                            joblib.dump(model, model_path); st.session_state.model_paths[(from_cls, to_cls)] = model_path
+                        # <-- MODIFIED: Construct model path and pass it to the training function
+                        model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
+                        acc = training.train_rf_model(X, y, model_path, st.session_state.training_predictor_schema)
+                        if acc:
+                            st.session_state.model_paths[(from_cls, to_cls)] = model_path
                             st.session_state.model_accuracies[f"{from_cls}->{to_cls}"] = acc
                             status.write(f"✅ Model trained. Accuracy: {acc:.2%}")
             
