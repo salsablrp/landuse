@@ -55,17 +55,31 @@ def remove_file(list_key, file_to_remove):
 # --- Initialize Session State ---
 def init_state():
     defaults = {
-        "active_step": "Home", "targets_loaded": False, "predictors_loaded": False,
-        "analysis_complete": False, "training_complete": False, "simulation_complete": False,
-        "uploaded_targets_with_years": [], "uploaded_predictors": [], "generated_predictors": [],
-        "model_paths": {}, "predicted_filepath": None,
-        "transition_matrix": None, "transition_counts": None, "class_legends": pd.DataFrame(), "scenario_predictors_modified": [], "scenario_predictors_uploaded": [], "use_neighborhood_choice": False,
+        "active_step": "Home",
+        "targets_loaded": False,
+        "predictors_loaded": False,
+        "analysis_complete": False,
+        "training_complete": False,
+        "simulation_complete": False,
+        "uploaded_targets_with_years": [],
+        "uploaded_predictors": [],
+        "generated_predictors": [],
+        "model_paths": {},
+        "predicted_filepath": None,
+        "model_accuracies": {},
+        "transition_matrix": None,
+        "transition_counts": None,
+        "class_legends": pd.DataFrame(),
+        "scenario_predictors_modified": [],
+        "scenario_predictors_uploaded": [],
+        "use_neighborhood_choice": False,
         "radius_choice": 5,
         "use_growth_modes_choice": False,
         "threshold_choice": 100,
         "use_policy_demand_choice": False,
         "use_stochastic_choice": False,
-        "training_predictor_schema": []
+        "training_predictor_schema": [],
+        "scenario_predictor_map": {}
     }
     for k, v in defaults.items():
         if k not in st.session_state: st.session_state[k] = v
