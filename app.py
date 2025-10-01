@@ -420,17 +420,14 @@ elif st.session_state.active_step == "Simulate Future":
                     st.caption(f"-> {os.path.basename(path)}")
 
         with st.expander("Advanced Options: Policy & Simulation Mode", expanded=True):
-            # Using .get() to remember the user's last choice and providing a unique key
             use_policy_demand = st.checkbox(
                 "Override historical trends with policy targets", 
                 value=st.session_state.get('use_policy_demand_choice', False),
                 key='use_policy_demand_choice'
             )
             
-            # Logic to determine the final_counts based on the user's choice
             if use_policy_demand:
                 st.info("Edit the pixel counts below to set policy-driven demands for each transition.")
-                # The data editor needs a key to be editable.
                 edited_counts = st.data_editor(
                     st.session_state.transition_counts, 
                     use_container_width=True,
@@ -440,7 +437,6 @@ elif st.session_state.active_step == "Simulate Future":
             else:
                 final_counts = st.session_state.transition_counts
             
-            # Checkbox for stochastic simulation
             use_stochastic = st.checkbox(
                 "Enable Stochastic Simulation (for uncertainty analysis)", 
                 value=st.session_state.get('use_stochastic_choice', False),
