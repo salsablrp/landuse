@@ -30,7 +30,6 @@ def _generate_single_suitability_map(from_class, model_path, predictor_files, lc
 
     batch_size = 50000
     with ExitStack() as stack:
-        # --- MODIFIED: Ensure predictors are opened in the correct order based on the model's training schema ---
         predictors = [stack.enter_context(_open_as_raster(f)) for f in predictor_files]
         for i in range(0, len(from_coords), batch_size):
             batch_coords = from_coords[i:i+batch_size]
@@ -47,7 +46,11 @@ def _generate_single_suitability_map(from_class, model_path, predictor_files, lc
     return temp_filepath
 
 def generate_suitability_atlas(predictor_files, lc_end_file, trained_model_paths, temp_dir, progress_callback=None):
-    if progress_callback is None: def progress_callback(p, t): pass
+    """
+    Stage 2 of the simulation: Generates all suitability maps.
+    """
+    if progress_callback is None:
+        def progress_callback(p, t): pass
     
     suitability_paths = {}
     growth_mode = any(len(k) == 3 for k in trained_model_paths.keys())
@@ -74,6 +77,9 @@ def generate_suitability_atlas(predictor_files, lc_end_file, trained_model_paths
     return suitability_paths
 
 def run_allocation_simulation(lc_end_file, transition_counts, suitability_paths, temp_dir, stochastic=False):
+    """
+    Stage 3 of the simulation: Allocates change using the pre-generated atlas.
+    """
     growth_mode = any(len(k) == 3 for k in suitability_paths.keys())
 
     with _open_as_raster(lc_end_file) as src:
@@ -107,15 +113,24 @@ def run_allocation_simulation(lc_end_file, transition_counts, suitability_paths,
         if num_to_change <= 0: del suitability_map; gc.collect(); continue
         
         if stochastic:
+            # --- THIS IS THE BUG FIX ---
+            # Find indices of scores that are actually greater than zero
             non_zero_indices = np.where(available_scores > 0)[0]
+            
+            # The number we can choose is limited by the demand and the number of valid options
             size_for_choice = min(num_to_change, len(non_zero_indices))
+            
             if size_for_choice > 0:
+                # Sample only from the valid, non-zero probability options
                 scores_for_choice = available_scores[non_zero_indices]
                 probs_for_choice = scores_for_choice / np.sum(scores_for_choice)
+                
                 chosen_subset_indices = np.random.choice(len(non_zero_indices), size=size_for_choice, replace=False, p=probs_for_choice)
+                
+                # Map these chosen indices back to the original indices of the 'available_scores' array
                 top_indices = non_zero_indices[chosen_subset_indices]
             else:
-                top_indices = []
+                top_indices = [] # No valid pixels to choose from
         else:
             top_indices = np.argpartition(available_scores, -num_to_change)[-num_to_change:]
 
@@ -123,6 +138,7 @@ def run_allocation_simulation(lc_end_file, transition_counts, suitability_paths,
             coords_to_change = available_coords[top_indices]
             rows, cols = coords_to_change.T
             future_lc[rows, cols] = to_cls
+
         del suitability_map; gc.collect()
     
     output_path = os.path.join(temp_dir, "predicted_land_cover.tif")
