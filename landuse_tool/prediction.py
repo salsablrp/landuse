@@ -9,69 +9,94 @@ from contextlib import ExitStack
 from rasterio.windows import Window
 import gc
 from scipy.ndimage import binary_dilation
-import json # <-- NEW: Import json
+import json
 
 from .data_loader import _open_as_raster
 
-# <-- MODIFIED: Updated the function signature to accept the required features
 def _generate_single_suitability_map(model_path, predictor_files, lc_end_file, temp_dir, required_features, model_type=''):
-    """Helper function to generate one suitability map, ensuring feature alignment."""
+    """
+    Helper function to generate one suitability map using a memory-efficient,
+    chunk-based processing strategy.
+    """
     model = joblib.load(model_path)
     
-    # --- NEW: Align available predictors with the model's required features ---
-    # Create a dictionary for quick lookup of full paths/objects from basenames
+    # --- Alignment logic (no changes here) ---
     available_predictors = {
         os.path.basename(f.name if hasattr(f, 'name') else f): f for f in predictor_files
     }
-    
-    # Build the list of predictors in the exact order the model expects
     aligned_predictor_files = []
     for feature_name in required_features:
         source = available_predictors.get(feature_name)
         if source:
             aligned_predictor_files.append(source)
         else:
-            raise FileNotFoundError(f"CRITICAL ERROR: Model requires predictor '{feature_name}', but it was not found among available rasters.")
-    # --- End of new alignment logic ---
+            raise FileNotFoundError(f"CRITICAL ERROR: Model requires predictor '{feature_name}', but it was not found.")
 
-    # Generate a descriptive filename
     from_class, to_cls_str = os.path.basename(model_path).replace('.joblib','').split('_')[-2:]
     filename = f'suitability_{model_type}_{from_class}_to_{to_cls_str}.tif' if model_type else f'suitability_{from_class}_to_{to_cls_str}.tif'
     temp_filepath = os.path.join(temp_dir, filename)
 
-    with _open_as_raster(lc_end_file) as ref_src:
-        ref_arr = ref_src.read(1); profile = ref_src.profile
-        profile.update(dtype='float32', count=1, nodata=-1.0)
-        from_mask = (ref_arr == int(from_class)) # Ensure from_class is int
-        from_coords = np.argwhere(from_mask)
-        if from_coords.size == 0:
-            with rasterio.open(temp_filepath, 'w', **profile) as dst:
-                dst.write(np.full(ref_arr.shape, -1.0, dtype='float32'), 1)
-            return temp_filepath
-        suitability_map = np.full(ref_arr.shape, -1.0, dtype='float32')
-
-    batch_size = 50000
     with ExitStack() as stack:
-        # <-- MODIFIED: Use the newly aligned list of predictors
+        # Open all required predictor files at once
         predictors = [stack.enter_context(_open_as_raster(f)) for f in aligned_predictor_files]
-        for i in range(0, len(from_coords), batch_size):
-            batch_coords = from_coords[i:i+batch_size]
-            X_batch = []
-            for r, c in batch_coords:
-                pixel_values = [p_src.read(1, window=Window(c, r, 1, 1))[0, 0] for p_src in predictors]
-                X_batch.append(pixel_values)
-            if X_batch:
-                # This call is now safe, as X_batch will have the correct number of features
-                probs = model.predict_proba(np.array(X_batch))[:, 1]
-                rows, cols = batch_coords.T
-                suitability_map[rows, cols] = probs
+        ref_src = stack.enter_context(_open_as_raster(lc_end_file))
+        
+        profile = ref_src.profile
+        profile.update(dtype='float32', count=1, nodata=-1.0)
+        suitability_map = np.full((profile['height'], profile['width']), -1.0, dtype='float32')
+
+        # --- NEW: Chunk-based processing loop ---
+        # Iterate through the raster in chunks (windows) for memory efficiency
+        for _, window in ref_src.block_windows(1):
+            # 1. Read the land cover data for the current chunk
+            lc_chunk = ref_src.read(1, window=window)
+            
+            # 2. Find pixels of interest (`from_class`) within this chunk
+            from_mask_chunk = (lc_chunk == int(from_class))
+            
+            # 3. If no relevant pixels in this chunk, skip to the next one
+            if not np.any(from_mask_chunk):
+                continue
+            
+            # 4. Read data from all predictors for the current chunk
+            predictor_chunks = [p.read(1, window=window) for p in predictors]
+            
+            # 5. Stack predictor chunks and create the feature matrix (X)
+            # The shape is transposed to (height, width, num_predictors) and then
+            # filtered by the mask to get a 2D array of (num_pixels, num_predictors)
+            X_chunk = np.stack(predictor_chunks).transpose(1, 2, 0)[from_mask_chunk]
+            
+            # 6. Run prediction on all relevant pixels in the chunk at once
+            if X_chunk.shape[0] > 0:
+                probs = model.predict_proba(X_chunk)[:, 1]
+                
+                # 7. Place the results back into the main suitability map
+                # We create a temporary map for the chunk and then update the main map
+                chunk_prob_map = np.full(lc_chunk.shape, -1.0, dtype='float32')
+                chunk_prob_map[from_mask_chunk] = probs
+                
+                # Get the slice for the full suitability_map from the window
+                row_start, col_start = window.row_off, window.col_off
+                row_stop, col_stop = row_start + window.height, col_start + window.width
+                
+                # Update only where the original mask was true
+                map_slice = suitability_map[row_start:row_stop, col_start:col_stop]
+                np.copyto(map_slice, chunk_prob_map, where=(from_mask_chunk))
+
+            # 8. Manually clear memory to be safe, especially with many large chunks
+            del X_chunk, predictor_chunks, lc_chunk, from_mask_chunk
+            gc.collect()
+
+    # Write the final, complete suitability map to a file
     with rasterio.open(temp_filepath, 'w', **profile) as dst:
         dst.write(suitability_map, 1)
+        
     return temp_filepath
+
 
 def generate_suitability_atlas(predictor_files, lc_end_file, trained_model_paths, temp_dir, progress_callback=None):
     """
-    Stage 2 of the simulation: Generates all suitability maps.
+    Stage 2 of the simulation: Generates all suitability maps. (No changes here)
     """
     if progress_callback is None:
         def progress_callback(p, t): pass
@@ -80,37 +105,32 @@ def generate_suitability_atlas(predictor_files, lc_end_file, trained_model_paths
     total_maps_to_generate = len(trained_model_paths)
     i = 0
 
-    # <-- MODIFIED: Simplified the loop to handle both modes elegantly
     for key, model_path in trained_model_paths.items():
         i += 1
         
-        # --- NEW: Load the feature schema for this specific model ---
         features_path = model_path.replace(".joblib", "_features.json")
         if not os.path.exists(features_path):
             raise FileNotFoundError(f"Feature schema not found for model: {model_path}. Expected at: {features_path}")
         with open(features_path, 'r') as f:
             required_features = json.load(f)
-        # --- End of new logic ---
 
         if len(key) == 3: # Growth mode: (from_cls, to_cls, mode)
             from_cls, to_cls, mode = key
             progress_callback(i / total_maps_to_generate, f"Generating {mode} map for {from_cls}->{to_cls}")
-            # <-- MODIFIED: Pass required_features to the helper function
             suitability_paths[key] = _generate_single_suitability_map(model_path, predictor_files, lc_end_file, temp_dir, required_features, mode)
         else: # Standard mode: (from_cls, to_cls)
             from_cls, to_cls = key
             progress_callback(i / total_maps_to_generate, f"Generating suitability map for {from_cls}->{to_cls}")
-            # <-- MODIFIED: Pass required_features to the helper function
             suitability_paths[key] = _generate_single_suitability_map(model_path, predictor_files, lc_end_file, temp_dir, required_features)
     
     progress_callback(1.0, "Suitability atlas complete!")
     return suitability_paths
 
-# --- run_allocation_simulation function remains unchanged ---
 def run_allocation_simulation(lc_end_file, transition_counts, suitability_paths, temp_dir, stochastic=False):
     """
-    Stage 3 of the simulation: Allocates change using the pre-generated atlas.
+    Stage 3 of the simulation: Allocates change using the pre-generated atlas. (No changes here)
     """
+    # ... (This entire function remains exactly the same)
     growth_mode = any(len(k) == 3 for k in suitability_paths.keys())
 
     with _open_as_raster(lc_end_file) as src:
