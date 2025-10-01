@@ -64,7 +64,8 @@ def init_state():
         "use_growth_modes_choice": False,
         "threshold_choice": 100,
         "use_policy_demand_choice": False,
-        "use_stochastic_choice": False
+        "use_stochastic_choice": False,
+        "training_predictor_schema": []
     }
     for k, v in defaults.items():
         if k not in st.session_state: st.session_state[k] = v
@@ -309,6 +310,8 @@ elif st.session_state.active_step == "Training Model":
             st.session_state.simulation_complete = False 
             all_predictors = st.session_state.uploaded_predictors + st.session_state.generated_predictors
             
+            st.session_state.training_predictor_schema = [f.name if hasattr(f, 'name') else os.path.basename(f) for f in all_predictors]
+
             st.session_state.model_paths, st.session_state.model_accuracies = {}, {}
             progress_bar = st.progress(0)
             status = st.status("Starting model training...", expanded=True)
@@ -349,6 +352,7 @@ elif st.session_state.active_step == "Training Model":
         if st.session_state.training_complete:
             st.subheader("Results from Last Training Run")
             with st.expander("View Trained Model Accuracies", expanded=True):
+                st.write(st.session_state.training_predictor_schema)
                 if st.session_state.model_accuracies:
                     acc_df = pd.DataFrame.from_dict(st.session_state.model_accuracies, orient='index', columns=['Accuracy'])
                     acc_df.index.name = "Transition"
@@ -446,6 +450,7 @@ elif st.session_state.active_step == "Simulate Future":
         st.info("This is the most computationally intensive step. It uses the trained AI models to generate a probability map for each transition.")
         
         if st.button("Generate Suitability Atlas"):
+            # When re-running, reset the subsequent steps
             st.session_state.suitability_atlas_complete = False
             st.session_state.simulation_complete = False
             
@@ -456,8 +461,8 @@ elif st.session_state.active_step == "Simulate Future":
                 progress_bar.progress(p)
             
             targets = st.session_state.uploaded_targets_with_years
-            all_predictors = st.session_state.uploaded_predictors + st.session_state.generated_predictors + st.session_state.scenario_predictors_uploaded + st.session_state.scenario_predictors_modified
-            
+            all_predictors = st.session_state.uploaded_predictors + st.session_state.get('generated_predictors', []) + st.session_state.get('scenario_predictors_uploaded', []) + st.session_state.get('scenario_predictors_modified', [])
+
             suitability_paths = prediction.generate_suitability_atlas(
                 predictor_files=all_predictors,
                 lc_end_file=targets[-1]['file'],
@@ -467,21 +472,20 @@ elif st.session_state.active_step == "Simulate Future":
             )
             st.session_state.suitability_paths = suitability_paths
             st.session_state.suitability_atlas_complete = True
-            status.update(label="Suitability Atlas generation complete!", state="complete")
             st.rerun()
 
         st.divider()
 
         st.subheader("Step 4b: Run Final Simulation")
-        
-        # Check if the atlas is ready
         if st.session_state.get("suitability_atlas_complete"):
             st.success("✅ Suitability Atlas is ready for the final simulation.")
             st.info("This step is much faster. It uses the pre-generated suitability maps to allocate the projected land use changes.")
 
             with st.expander("Download Suitability Maps (Optional)"):
-                for (from_cls, to_cls, *mode), path in st.session_state.suitability_paths.items():
-                    mode_str = f"_{mode[0]}" if mode else ""
+                # Use .get() for safety in case suitability_paths is not yet created
+                for key, path in st.session_state.get("suitability_paths", {}).items():
+                    mode_str = f"_{key[2]}" if len(key) == 3 else ""
+                    from_cls, to_cls = key[0], key[1]
                     with open(path, "rb") as fp:
                         st.download_button(
                             label=f"Download Suitability: {from_cls} -> {to_cls}{mode_str}",
@@ -500,16 +504,15 @@ elif st.session_state.active_step == "Simulate Future":
                     )
                     st.session_state.predicted_filepath = future_lc_path
                     st.session_state.simulation_complete = True
-                    st.success("✅ Simulation process finished successfully! You can now proceed to Visualization.")
-        
+                    st.rerun()
         else:
-            # If the atlas is not ready, show a warning
             st.warning("Please generate the Suitability Atlas in Step 4a before running the final simulation.")
 
         # --- Display Final Results if the simulation is totally complete ---
         if st.session_state.simulation_complete:
             st.divider()
             st.subheader("Results from Last Simulation Run")
+            st.write("You can view the results in the **Visualization** step or download the predicted map below.")
             if st.session_state.predicted_filepath:
                 with open(st.session_state.predicted_filepath, "rb") as fp:
                     st.download_button(label="Download Predicted Map (GeoTIFF)", data=fp, file_name="predicted_land_cover.tif")
