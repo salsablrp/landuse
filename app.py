@@ -354,14 +354,15 @@ elif st.session_state.active_step == "Training Model":
                     status.update(label=progress_text); progress_bar.progress(model_counter / total_models_to_train)
                     X, y = training.create_transition_dataset(from_cls, to_cls, st.session_state.uploaded_targets_with_years[0]['file'], st.session_state.uploaded_targets_with_years[-1]['file'], all_predictors)
                     if X is not None:
-                        # <-- MODIFIED: Construct model path and pass it to the training function
                         model_path = os.path.join(st.session_state.temp_dir, f"model_{from_cls}_{to_cls}.joblib")
                         acc = training.train_rf_model(X, y, model_path, st.session_state.training_predictor_schema)
                         if acc:
                             st.session_state.model_paths[(from_cls, to_cls)] = model_path
                             st.session_state.model_accuracies[f"{from_cls}->{to_cls}"] = acc
                             status.write(f"✅ Model trained. Accuracy: {acc:.2%}")
-            
+                    else: 
+                        status.write(f"⚠️ SKIPPED: Not enough balanced samples for transition {from_cls}->{to_cls}. Check data or lower the sample threshold in previous step.")
+
             status.update(label="All AI models trained!", state="complete")
             st.session_state.training_complete = True
             st.rerun()
